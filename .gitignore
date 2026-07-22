@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+venv/
+env/
+
+# Logs (regenerated on every run, not source)
+logs/*.log
+
+# Local test/diagnostic outputs
+/tmp/
+*.json.bak

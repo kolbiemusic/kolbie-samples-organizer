@@ -1,0 +1,74 @@
+{
+  "genre_mappings": {
+    "techno house": "Techno",
+    "tech house": "Techno",
+    "deep house": "Deep",
+    "deep techno": "Deep",
+    "progressive house": "Progressive",
+    "progressive techno": "Progressive",
+    "minimal house": "Minimal",
+    "minimal techno": "Minimal",
+    "drum and bass": "DnB",
+    "drum n bass": "DnB",
+    "dnb": "DnB",
+    "drum bass": "DnB",
+    "hip hop": "HipHop",
+    "hip-hop": "HipHop",
+    "hiphop": "HipHop",
+    "dark ambient": "Ambient",
+    "ambient": "Ambient",
+    "cinematic": "Cinematic",
+    "experimental": "Experimental"
+  },
+  "genre_keywords": {
+    "House": ["house", "deep house", "tech house", "progressive house", "acid house"],
+    "Techno": ["techno", "acid techno", "tech", "minimal techno", "industrial"],
+    "Deep": ["deep", "deep house", "deep techno", "deep minimal"],
+    "Minimal": ["minimal", "minimal techno", "minimal house"],
+    "Progressive": ["progressive", "prog", "progressive house", "progressive techno"],
+    "Trance": ["trance", "progressive trance", "psytrance", "uplifting"],
+    "DnB": ["drum and bass", "dnb", "drum bass", "drum n bass", "breakbeats"],
+    "Dubstep": ["dubstep", "brostep", "wobble"],
+    "Trap": ["trap", "future bass", "wavetrap"],
+    "HipHop": ["hip hop", "hip-hop", "hiphop", "boom bap", "boom-bap"],
+    "Ambient": ["ambient", "dark ambient", "pad", "atmospheric"],
+    "Cinematic": ["cinematic", "orchestral", "film", "movie"],
+    "Experimental": ["experimental", "glitch", "IDM", "intelligent dance"]
+  },
+  "type_keywords": {
+    "Drums": ["drum", "kick", "snare", "hat", "hihat", "hi-hat", "percussion", "break", "loop", "break"],
+    "Bass": ["bass", "sub", "low", "wobble"],
+    "Pads": ["pad", "ambient", "strings", "texture", "atmos", "atmospheric"],
+    "Leads": ["lead", "melody", "synth", "riff", "top"],
+    "Fx": ["fx", "effect", "sfx", "sound effect", "transition", "drop", "swell", "whoosh", "scratch", "sweep", "riser", "downlifter", "uplifter", "impact", "boom", "atmosphere", "noise"],
+    "Vox": ["vocal", "voice", "vox", "acapella", "acapela", "rap", "speech", "chop", "stab"]
+  },
+  "bpm_patterns": [
+    "(?:\\D|^)(\\d{2,3})(?:\\s*bpm|\\s*-\\s*bpm|\\s*-\\s*\\d{2,3}|\\D|$)",
+    "\\[(\\d{2,3})\\]",
+    "_(\\d{2,3})_"
+  ],
+  "key_patterns": [
+    "\\[(\\w\\#?m?)\\]",
+    "_(\\w\\#?m?)_",
+    "(\\w\\#?m?)(?:\\s|_|$)"
+  ],
+  "classification_thresholds": {
+    "short_oneshot_max_duration_seconds": 2.0,
+    "loop_similarity_threshold": 0.55,
+    "onset_regularity_cv_threshold": 0.35,
+    "min_onsets_for_rhythmic": 3,
+    "tail_silence_ratio": 0.15
+  },
+  "duration_ranges_fx": [
+    [0, 3, "0-3s"],
+    [3, 8, "3-8s"],
+    [8, 20, "8-20s"],
+    [20, 999, "20s+"]
+  ],
+  "brightness_bands": {
+    "low_max_hz": 250,
+    "mid_max_hz": 4000,
+    "dominance_ratio": 0.45
+  }
+}
