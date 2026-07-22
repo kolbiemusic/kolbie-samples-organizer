@@ -88,6 +88,39 @@ completo dessas 5 pastas achou 919/962 arquivos corrompidos (95.5%). O
 resto da pasta (~19.387 arquivos) está limpo. Conclusão: não precisa de
 etapa de pré-conversão, o Ciclo 1 pode rodar como está.
 
+## Performance: análise paralela (`--parallel-workers`)
+
+Hardware: Apple M1 Pro, 8 núcleos (6P+2E), 16GB RAM. Discos fonte/destino são
+externos via USB — provavelmente HD mecânico, não SSD.
+
+`ProcessPoolExecutor` paraleliza só a **fase de análise** (Fase 2) — é a
+única CPU-bound (STFT/chroma/onset detection são independentes por
+arquivo). Validação e cópia continuam sequenciais de propósito: validação é
+leve em I/O, e cópia é limitada pelo disco físico, não pela CPU — paralelizar
+cópia arrisca *piorar* num HD mecânico em vez de ajudar.
+
+**Benchmark real (3 vs 4 vs 6 workers, amostra de 300 arquivos)**:
+13.94 arq/s (3w) → **17.52 arq/s (4w, 5.05x vs sequencial)** → 11.86 arq/s
+(6w). 6 workers é *mais lento* que 4 — confirma que a contenção de leitura
+concorrente no HD externo satura antes da CPU (8 núcleos) saturar.
+**4 é o valor testado e recomendado pra este disco específico** — não é
+"quanto mais melhor". Se o disco fonte mudar, vale re-testar com
+`--sample-size 300` antes de assumir que 4 continua ótimo.
+
+Default do CLI continua `--parallel-workers 1` (sequencial, comportamento
+original) a menos que pedido explicitamente; `0` = auto-detectar
+(cpu_count-1).
+
+**Estimativa atualizada do Ciclo 1**: análise sequencial era 93.3 min pra
+19.430 arquivos; paralela (4 workers) caiu pra ~18.5 min. Ciclo 1 completo
+(validação + análise + cópia) agora ~1.9-2.4h (era ~3.2-4h antes do
+paralelismo). Números baseados em medição real nesta sessão, não em chute.
+
+**Achado sinalizado, não implementado ainda**: paralelizando a análise, o
+Ciclo 2 (SAMPLES ABLETON, 153.977 arquivos) passa a ser limitado pela fase
+de **validação** (sequencial) — sozinha levaria ~4.9h ali. Vale paralelizar
+validação também antes do Ciclo 2, mas é decisão pra quando chegar nele.
+
 ## Notas de colaboração
 
 - Revisão de relatório piloto → brief estruturado com mudanças numeradas →

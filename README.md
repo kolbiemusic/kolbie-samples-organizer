@@ -45,16 +45,25 @@ python migrate_samples.py \
   --source-dir "/Volumes/Gui 2TB Dados/-ELETRONIC MUSIC-" \
   --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" \
   --dry-run \
+  --parallel-workers 4 \
   --verbose
 
 # Se ok, executar para valer
 python migrate_samples.py \
   --source-dir "/Volumes/Gui 2TB Dados/-ELETRONIC MUSIC-" \
   --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" \
+  --parallel-workers 4 \
   --verbose
 ```
 
-**Tempo estimado**: ~5 horas
+**Tempo estimado**: ~2h (medido no hardware real: M1 Pro 8-core + HD externo USB)
+
+`--parallel-workers 4` paraleliza a fase de análise de áudio (CPU-bound) em
+processos separados. **4 é o valor testado e recomendado neste disco** — não
+é "quanto mais melhor": testamos 3/4/6 workers e 6 ficou *pior* que 4 porque
+o HD externo via USB satura com leituras concorrentes demais (contenção de
+disco, não de CPU). Se trocar de disco fonte, vale re-testar com
+`--sample-size 300` antes de assumir que 4 continua ótimo.
 
 **Validação pós-ciclo**:
 - [ ] Revisar 20-30 arquivos em `/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES/`
@@ -68,25 +77,31 @@ python migrate_samples.py \
 python migrate_samples.py \
   --source-dir "/Volumes/Gui 2TB Dados/SAMPLES ABLETON" \
   --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" \
+  --parallel-workers 4 \
   --dry-run
 
 # Se ok
 python migrate_samples.py \
   --source-dir "/Volumes/Gui 2TB Dados/SAMPLES ABLETON" \
-  --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES"
+  --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" \
+  --parallel-workers 4
 ```
 
-**Tempo estimado**: ~15 horas
+**Tempo estimado**: ~8h. Atenção: com a análise paralelizada, a fase de
+**validação** (sequencial, ~1 hora a cada ~31k arquivos neste disco) passa a
+dominar o tempo total nesta pasta por ter 153.977 arquivos — candidata a
+paralelizar também antes de rodar, se quiser acelerar mais.
 
 ### 5. CICLO 3: NEW SAMPLES N PRESETS (41.213 arquivos, 74 GB)
 
 ```bash
 python migrate_samples.py \
   --source-dir "/Volumes/Gui 2TB Dados/NEW SAMPLES N PRESETS" \
-  --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES"
+  --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" \
+  --parallel-workers 4
 ```
 
-**Tempo estimado**: ~7 horas
+**Tempo estimado**: ~2.4h
 
 ## 📁 Estrutura de Destino
 

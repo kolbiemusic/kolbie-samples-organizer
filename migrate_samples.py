@@ -18,6 +18,7 @@ import json
 import logging
 import argparse
 from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor
 from tqdm import tqdm
 import colorlog
 
@@ -57,6 +58,34 @@ def setup_logging(verbose=False, log_dir='logs'):
     return logging.getLogger(__name__)
 
 logger = setup_logging()
+
+# --- Parallel analysis worker (runs in child processes) ---
+#
+# ProcessPoolExecutor needs a top-level, picklable callable — an instance
+# method on SampleMigrator won't work here because the whole instance (with
+# its logging handlers etc.) would have to be pickled. Instead each worker
+# process builds its own AudioAnalyzer once (via `initializer`) and reuses
+# it for every file that lands on that worker, avoiding per-file setup cost.
+#
+# Analysis is CPU-bound (STFT, chroma, onset detection per file are all
+# independent of each other), so this is the phase that benefits from
+# multiple processes — threads wouldn't help due to the GIL. Validation and
+# copy stay sequential: validation is light I/O, and copy throughput is
+# capped by the disks, not the CPU, so parallel copy risks thrashing an HDD
+# instead of speeding anything up.
+_worker_analyzer = None
+
+def _init_worker(config):
+    global _worker_analyzer
+    # Child processes (spawned, not forked, on macOS) start with no logging
+    # configuration — keep it minimal here (warnings/errors to stderr only)
+    # rather than duplicating file handlers across processes, which would
+    # interleave writes to the same log file.
+    logging.basicConfig(level=logging.WARNING)
+    _worker_analyzer = AudioAnalyzer(config)
+
+def _analyze_worker(filepath):
+    return _worker_analyzer.analyze_file(filepath)
 
 class SampleMigrator:
     def __init__(self, config_path='config/genre_mapping.json'):
@@ -119,19 +148,39 @@ class SampleMigrator:
         logger.info(f"Files to process: {len(valid_files)}")
         return valid_files
 
-    def run_analysis_phase(self, audio_files):
-        """Phase 2: Analyze audio files"""
+    def run_analysis_phase(self, audio_files, num_workers=1):
+        """Phase 2: Analyze audio files (parallel across processes when num_workers > 1)"""
         logger.info("=" * 60)
         logger.info("PHASE 2: AUDIO ANALYSIS")
         logger.info("=" * 60)
 
         metadata_list = []
-        logger.info(f"Analyzing {len(audio_files)} audio files...")
+        logger.info(f"Analyzing {len(audio_files)} audio files ({num_workers} worker{'s' if num_workers != 1 else ''})...")
 
-        for filepath in tqdm(audio_files, desc="Analyzing"):
-            metadata = self.analyzer.analyze_file(filepath)
-            if metadata:
-                metadata_list.append(metadata)
+        # str() paths: Path objects pickle fine, but keeping this explicit
+        # since it's what crosses the process boundary on every task.
+        file_paths = [str(f) for f in audio_files]
+
+        if num_workers <= 1:
+            for filepath in tqdm(file_paths, desc="Analyzing"):
+                metadata = self.analyzer.analyze_file(filepath)
+                if metadata:
+                    metadata_list.append(metadata)
+        else:
+            # chunksize > 1 cuts inter-process round trips — with ~20k fast
+            # (~0.3s) tasks, sending one file per IPC message dominates
+            # overhead. ~4 chunks per worker balances load without letting
+            # one slow chunk stall a worker for too long.
+            chunksize = max(1, len(file_paths) // (num_workers * 4))
+            with ProcessPoolExecutor(
+                max_workers=num_workers,
+                initializer=_init_worker,
+                initargs=(self.config,)
+            ) as executor:
+                results = executor.map(_analyze_worker, file_paths, chunksize=chunksize)
+                for metadata in tqdm(results, total=len(file_paths), desc="Analyzing"):
+                    if metadata:
+                        metadata_list.append(metadata)
 
         logger.info(f"✓ Analyzed: {len(metadata_list)}/{len(audio_files)}")
 
@@ -207,7 +256,7 @@ class SampleMigrator:
         if html_path:
             logger.info(f"✓ HTML report: {html_path}")
 
-    def run(self, source_dir, destination_dir, dry_run=False, sample_size=None):
+    def run(self, source_dir, destination_dir, dry_run=False, sample_size=None, num_workers=1):
         """Execute complete migration"""
         logger.info("🎵 KOLBIE SAMPLES - Migration Started")
         logger.info(f"Dry run: {dry_run}")
@@ -232,7 +281,7 @@ class SampleMigrator:
             return False
 
         # Phase 2: Analyze
-        metadata_list = self.run_analysis_phase(valid_files)
+        metadata_list = self.run_analysis_phase(valid_files, num_workers=num_workers)
 
         if not metadata_list:
             logger.error("No files to analyze!")
@@ -257,15 +306,25 @@ def main():
     parser.add_argument('--dry-run', action='store_true', help='Simulate without copying files')
     parser.add_argument('--verbose', action='store_true', help='Verbose logging')
     parser.add_argument('--sample-size', type=int, help='Process only N random files (for testing)')
+    parser.add_argument(
+        '--parallel-workers', type=int, default=1,
+        help='Number of processes for the analysis phase (CPU-bound; leaves other phases sequential). '
+             'Use 0 to auto-detect (CPU count - 1). Default: 1 (sequential, original behavior).'
+    )
 
     args = parser.parse_args()
+
+    num_workers = args.parallel_workers
+    if num_workers == 0:
+        num_workers = max(1, (os.cpu_count() or 2) - 1)
 
     migrator = SampleMigrator(args.config)
     success = migrator.run(
         args.source_dir,
         args.destination,
         dry_run=args.dry_run,
-        sample_size=args.sample_size
+        sample_size=args.sample_size,
+        num_workers=num_workers
     )
 
     sys.exit(0 if success else 1)
