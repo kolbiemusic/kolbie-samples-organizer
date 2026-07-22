@@ -45,25 +45,16 @@ python migrate_samples.py \
   --source-dir "/Volumes/Gui 2TB Dados/-ELETRONIC MUSIC-" \
   --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" \
   --dry-run \
-  --parallel-workers 4 \
   --verbose
 
 # Se ok, executar para valer
 python migrate_samples.py \
   --source-dir "/Volumes/Gui 2TB Dados/-ELETRONIC MUSIC-" \
   --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" \
-  --parallel-workers 4 \
   --verbose
 ```
 
-**Tempo estimado**: ~2h (medido no hardware real: M1 Pro 8-core + HD externo USB)
-
-`--parallel-workers 4` paraleliza a fase de análise de áudio (CPU-bound) em
-processos separados. **4 é o valor testado e recomendado neste disco** — não
-é "quanto mais melhor": testamos 3/4/6 workers e 6 ficou *pior* que 4 porque
-o HD externo via USB satura com leituras concorrentes demais (contenção de
-disco, não de CPU). Se trocar de disco fonte, vale re-testar com
-`--sample-size 300` antes de assumir que 4 continua ótimo.
+**Tempo estimado**: ~2h + ~1min de calibração automática (hardware de referência: M1 Pro 8-core + HD externo USB)
 
 **Validação pós-ciclo**:
 - [ ] Revisar 20-30 arquivos em `/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES/`
@@ -77,31 +68,56 @@ disco, não de CPU). Se trocar de disco fonte, vale re-testar com
 python migrate_samples.py \
   --source-dir "/Volumes/Gui 2TB Dados/SAMPLES ABLETON" \
   --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" \
-  --parallel-workers 4 \
   --dry-run
 
 # Se ok
 python migrate_samples.py \
   --source-dir "/Volumes/Gui 2TB Dados/SAMPLES ABLETON" \
-  --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" \
-  --parallel-workers 4
+  --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES"
 ```
 
-**Tempo estimado**: ~8h. Atenção: com a análise paralelizada, a fase de
-**validação** (sequencial, ~1 hora a cada ~31k arquivos neste disco) passa a
-dominar o tempo total nesta pasta por ter 153.977 arquivos — candidata a
-paralelizar também antes de rodar, se quiser acelerar mais.
+**Tempo estimado**: varia — desde a paralelização da validação (ver seção
+abaixo), essa pasta deixou de ser bloqueada só pela análise.
 
 ### 5. CICLO 3: NEW SAMPLES N PRESETS (41.213 arquivos, 74 GB)
 
 ```bash
 python migrate_samples.py \
   --source-dir "/Volumes/Gui 2TB Dados/NEW SAMPLES N PRESETS" \
-  --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" \
-  --parallel-workers 4
+  --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES"
 ```
 
-**Tempo estimado**: ~2.4h
+## ⚙️ Paralelismo automático (`--parallel-workers`)
+
+**Por padrão o script se auto-calibra.** Antes de cada rodada real, ele roda
+uma calibração rápida (~30-60s) testando alguns números de workers candidatos
+— baseados na contagem de núcleos da máquina — num pedaço real dos arquivos
+que vão ser processados nesta pasta, neste disco, agora. Escolhe o mais
+rápido pra cada fase de forma independente:
+
+```bash
+# Auto (padrão, sem precisar passar nada)
+python migrate_samples.py --source-dir "..." --destination "..."
+
+# Forçar um número específico e pular a calibração (útil em testes rápidos
+# repetidos, onde os ~30-60s de calibração pesam mais)
+python migrate_samples.py --source-dir "..." --destination "..." --parallel-workers 4
+
+# Sequencial puro (comportamento original, sem paralelismo)
+python migrate_samples.py --source-dir "..." --destination "..." --parallel-workers 1
+```
+
+**Por que auto em vez de um número fixo**: o número certo depende da
+combinação CPU + disco específica de cada máquina, não é uma constante.
+Testando neste projeto: a fase de análise (CPU) tem um "ponto ótimo" que cai
+se você passar dele (mais processos brigando pelo mesmo HD externo, não
+CPU saturando) — variou entre 4-7 dependendo da amostra testada. Mais
+surpreendente ainda: a fase de validação (hash MD5, leitura completa do
+arquivo) às vezes teve **1 thread mais rápido que 8** neste HD específico —
+contrário à intuição de "I/O sempre se beneficia de paralelismo". Um número
+fixo, hardcoded, tuned numa máquina, não se sustenta em outra — por isso a
+calibração roda de novo a cada execução, contra os arquivos reais daquela
+pasta.
 
 ## 📁 Estrutura de Destino
 

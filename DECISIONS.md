@@ -88,38 +88,57 @@ completo dessas 5 pastas achou 919/962 arquivos corrompidos (95.5%). O
 resto da pasta (~19.387 arquivos) está limpo. Conclusão: não precisa de
 etapa de pré-conversão, o Ciclo 1 pode rodar como está.
 
-## Performance: análise paralela (`--parallel-workers`)
+## Performance: paralelismo com auto-calibração (`--parallel-workers`)
 
-Hardware: Apple M1 Pro, 8 núcleos (6P+2E), 16GB RAM. Discos fonte/destino são
-externos via USB — provavelmente HD mecânico, não SSD.
+**Evolução em 2 rodadas.** Primeiro implementei paralelismo só na fase de
+análise com um número fixo (4 workers), tuned manualmente num benchmark
+dedicado nesta máquina/disco (Apple M1 Pro 8 núcleos + HD externo USB).
+Resultado: 5.05x mais rápido (17.52 arq/s vs 3.47 sequencial), com 6 workers
+sendo *pior* que 4 (contenção de leitura no HD, não CPU saturando).
 
-`ProcessPoolExecutor` paraleliza só a **fase de análise** (Fase 2) — é a
-única CPU-bound (STFT/chroma/onset detection são independentes por
-arquivo). Validação e cópia continuam sequenciais de propósito: validação é
-leve em I/O, e cópia é limitada pelo disco físico, não pela CPU — paralelizar
-cópia arrisca *piorar* num HD mecânico em vez de ajudar.
+**Problema do número fixo**: 4 foi tuned pra esta máquina + este disco
+específicos. Rodar em outro computador, ou trocar de HD, invalidaria o
+número sem re-benchmarkar manualmente — o oposto de "pronto pra rodar em
+qualquer computador, qualquer HD".
 
-**Benchmark real (3 vs 4 vs 6 workers, amostra de 300 arquivos)**:
-13.94 arq/s (3w) → **17.52 arq/s (4w, 5.05x vs sequencial)** → 11.86 arq/s
-(6w). 6 workers é *mais lento* que 4 — confirma que a contenção de leitura
-concorrente no HD externo satura antes da CPU (8 núcleos) saturar.
-**4 é o valor testado e recomendado pra este disco específico** — não é
-"quanto mais melhor". Se o disco fonte mudar, vale re-testar com
-`--sample-size 300` antes de assumir que 4 continua ótimo.
+**Solução: auto-calibração** (`modules/benchmark.py`). Antes de cada rodada
+real, o script testa alguns números de workers candidatos (baseados na
+contagem de núcleos: `{1, cpu//2, cpu-1, cpu}`) contra uma amostra real dos
+arquivos desta pasta, neste disco, agora — e usa o mais rápido. Roda pra
+**validação** (threads, já que é I/O-bound) e **análise** (processos,
+CPU-bound) de forma independente, já que podem ter ótimos diferentes.
 
-Default do CLI continua `--parallel-workers 1` (sequencial, comportamento
-original) a menos que pedido explicitamente; `0` = auto-detectar
-(cpu_count-1).
+**Dois cuidados metodológicos, achados rodando e comparando com meu
+benchmark manual anterior**:
+1. *Amostra igual por candidato.* Deixar o candidato de 8 workers processar
+   mais arquivos que o de 1 (pra "dar tempo" de amostrar) distorce a
+   comparação — o candidato maior amortiza seu próprio custo de startup
+   (mais processos pra importar bibliotecas) melhor que o menor, parecendo
+   mais rápido por motivo errado, não por throughput real.
+2. *Arquivos diferentes por candidato.* Reusar o mesmo arquivo pros 4
+   candidatos faz só o primeiro pagar leitura real de disco — os seguintes
+   pegam cache do SO, inflando artificialmente candidatos testados depois.
+   Cada candidato agora lê um pedaço não-sobreposto do disco.
 
-**Estimativa atualizada do Ciclo 1**: análise sequencial era 93.3 min pra
-19.430 arquivos; paralela (4 workers) caiu pra ~18.5 min. Ciclo 1 completo
-(validação + análise + cópia) agora ~1.9-2.4h (era ~3.2-4h antes do
-paralelismo). Números baseados em medição real nesta sessão, não em chute.
+**Achado que só a calibração real revela** (não teria adivinhado por
+intuição): calibrando a fase de validação pela etapa de hash MD5 (leitura
+do arquivo inteiro, não só o cabeçalho), **1 thread às vezes venceu 8**
+neste HD específico — leitura concorrente de arquivos grandes pode ser
+pior que sequencial num disco mecânico (mais movimento de cabeça de
+leitura entre arquivos intercalados). Contraria a suposição comum de "I/O
+sempre se beneficia de paralelismo" — motivo exato de calibrar em vez de
+fixar um número.
 
-**Achado sinalizado, não implementado ainda**: paralelizando a análise, o
-Ciclo 2 (SAMPLES ABLETON, 153.977 arquivos) passa a ser limitado pela fase
-de **validação** (sequencial) — sozinha levaria ~4.9h ali. Vale paralelizar
-validação também antes do Ciclo 2, mas é decisão pra quando chegar nele.
+**Uso**: `--parallel-workers` default agora é `'auto'` (calibra sozinho,
+~30-60s de overhead antes da rodada real — irrelevante numa rodada de
+horas). Passar um inteiro explícito pula a calibração (útil em testes
+rápidos repetidos, onde os 30-60s pesam proporcionalmente mais).
+
+**Estimativa do Ciclo 1**: com os workers calibrados automaticamente, ~2h +
+~1min de calibração (era ~3.2-4h sem paralelismo nenhum). Ciclo 2 (Ableton,
+153.977 arquivos) deixou de ficar bloqueado só pela validação sequencial,
+já que ela também está paralelizada agora — tempo exato depende do que a
+calibração encontrar naquele disco/pasta específica.
 
 ## Notas de colaboração
 
