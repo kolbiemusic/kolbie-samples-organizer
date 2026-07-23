@@ -9,8 +9,9 @@ __pycache__/
 venv/
 env/
 
-# Logs (regenerated on every run, not source)
+# Logs and per-run analysis dumps (regenerated on every run, not source)
 logs/*.log
+logs/*.txt
 
 # Local test/diagnostic outputs
 /tmp/

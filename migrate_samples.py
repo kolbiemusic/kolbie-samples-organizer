@@ -144,6 +144,12 @@ class SampleMigrator:
             audio_files.extend(source_path.rglob(f'*{ext}'))
             audio_files.extend(source_path.rglob(f'*{ext.upper()}'))
 
+        # A folder can carry an extension-like name too (e.g. an unextracted
+        # pack folder named "....wav/" with the real archive inside) — rglob
+        # matches it as a "file" by name alone, and every phase downstream
+        # (hash, copy) then fails on it with "Is a directory".
+        audio_files = [f for f in audio_files if f.is_file()]
+
         return sorted(list(set(audio_files)))
 
     def run_validation_phase(self, audio_files, num_workers=1):

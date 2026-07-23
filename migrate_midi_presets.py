@@ -158,6 +158,12 @@ class MidiPresetMigrator:
             found.extend(source_path.rglob(f'*{ext}'))
             found.extend(source_path.rglob(f'*{ext.upper()}'))
 
+        # A folder can carry an extension-like name too (e.g. an unextracted
+        # pack "Cymatics.Roses.for.Xfer.Serum.Pop.FXP/" with a .rar inside) —
+        # rglob matches it as a "file" by name alone, and every phase downstream
+        # (hash, copy) then fails on it with "Is a directory".
+        found = [f for f in found if f.is_file()]
+
         return sorted(set(found))
 
     def run_validation_phase(self, files, num_workers=1):
