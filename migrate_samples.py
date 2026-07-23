@@ -183,21 +183,23 @@ class SampleMigrator:
                     total=len(valid_paths_str), desc="Hashing"
                 ))
 
-        hash_map = {}
+        content_by_hash = {}
         duplicate_sets = 0
+        path_to_hash = {}
         for fp, file_hash in hash_results:
             if file_hash:
-                if file_hash in hash_map:
+                path_to_hash[fp] = file_hash
+                if file_hash in content_by_hash:
                     duplicate_sets += 1
                 else:
-                    hash_map[file_hash] = fp
+                    content_by_hash[file_hash] = fp
         logger.info(f"Found {duplicate_sets} duplicate sets")
 
         # Summary
         logger.info(f"Files to process: {len(valid_files)}")
-        return valid_files
+        return valid_files, path_to_hash
 
-    def run_analysis_phase(self, audio_files, num_workers=1):
+    def run_analysis_phase(self, audio_files, path_to_hash, num_workers=1):
         """Phase 2: Analyze audio files (parallel across processes when num_workers > 1)"""
         logger.info("=" * 60)
         logger.info("PHASE 2: AUDIO ANALYSIS")
@@ -230,6 +232,9 @@ class SampleMigrator:
                 for metadata in tqdm(results, total=len(file_paths), desc="Analyzing"):
                     if metadata:
                         metadata_list.append(metadata)
+
+        for metadata in metadata_list:
+            metadata['content_hash'] = path_to_hash.get(metadata['original_path'])
 
         logger.info(f"✓ Analyzed: {len(metadata_list)}/{len(audio_files)}")
 
@@ -302,24 +307,20 @@ class SampleMigrator:
         if dry_run:
             logger.warning("DRY RUN MODE - No files will be copied")
 
-        copied = 0
-        failed = 0
-
         for metadata in tqdm(metadata_list, desc="Migrating"):
             self.reporter.add_file_metadata(metadata)
 
             if not dry_run:
                 source_path = metadata.get('original_path')
                 result = self.organizer.copy_file(source_path, metadata)
-
                 if result:
                     metadata['new_path'] = result
-                    copied += 1
-                else:
-                    failed += 1
 
-        logger.info(f"✓ Copied: {copied}")
-        logger.info(f"✗ Failed: {failed}")
+        if not dry_run:
+            stats = self.organizer.get_stats()
+            logger.info(f"✓ Copied: {stats['copied']}")
+            logger.info(f"= Skipped (already migrated): {stats['skipped']}")
+            logger.info(f"✗ Failed: {stats['failed']}")
 
         return self.reporter
 
@@ -367,6 +368,11 @@ class SampleMigrator:
         if not self.validate_paths(source_dir, destination_dir):
             return False
 
+        # Fallback genre naming needs to know the source root to compute
+        # each file's top-level pack folder — stashed on the shared config
+        # dict so it rides along to worker processes via initargs.
+        self.config['_source_dir'] = str(Path(source_dir).resolve())
+
         # Phase 1: Find and validate files
         audio_files = self.find_audio_files(source_dir)
         logger.info(f"Found {len(audio_files)} audio files")
@@ -381,14 +387,14 @@ class SampleMigrator:
         else:
             validation_workers = analysis_workers = num_workers
 
-        valid_files = self.run_validation_phase(audio_files, num_workers=validation_workers)
+        valid_files, path_to_hash = self.run_validation_phase(audio_files, num_workers=validation_workers)
 
         if not valid_files:
             logger.error("No valid audio files found!")
             return False
 
         # Phase 2: Analyze
-        metadata_list = self.run_analysis_phase(valid_files, num_workers=analysis_workers)
+        metadata_list = self.run_analysis_phase(valid_files, path_to_hash, num_workers=analysis_workers)
 
         if not metadata_list:
             logger.error("No files to analyze!")

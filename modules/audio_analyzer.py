@@ -47,20 +47,38 @@ class AudioAnalyzer:
                 result['key'] = existing_metadata['key']
                 result['source'].append('metadata_key')
             if existing_metadata['genre']:
-                result['genre'] = existing_metadata['genre']
-                result['source'].append('metadata_genre')
+                # Normalize through the same keyword taxonomy as filename
+                # genre, don't trust the raw ID3 tag verbatim — checked
+                # against this library, some files carry uncurated tags
+                # like "Melodic House & Techno" or "Organic House" that
+                # would otherwise create one-off folders alongside the
+                # curated House/Techno/Deep buckets, fragmenting the same
+                # genre across multiple differently-spelled top-level
+                # folders. If the tag doesn't match any known genre,
+                # falls through to filename-based detection instead of
+                # trusting an arbitrary uncontrolled string.
+                normalized_genre = self._extract_genre_from_path(existing_metadata['genre'])
+                if normalized_genre:
+                    result['genre'] = normalized_genre
+                    result['source'].append('metadata_genre')
 
             # Get duration
             duration = self.validator.get_audio_duration(filepath)
             result['duration_sec'] = duration
 
-            # Step 2: Try to extract from filename
-            bpm_from_name = self._extract_bpm_from_name(str(filepath))
+            # Step 2: Try to extract from filename. Basename only, same
+            # reasoning as type below: searching the full path let a parent
+            # folder's track number or catalog code get read as this file's
+            # BPM/key. Validated against this library — that bug both
+            # fabricated values from unrelated folder numbers AND, worse,
+            # silently swallowed real basename BPMs when an earlier bogus
+            # match elsewhere in the path exhausted the pattern first.
+            bpm_from_name = self._extract_bpm_from_name(os.path.basename(filepath))
             if bpm_from_name and not result['bpm']:
                 result['bpm'] = bpm_from_name
                 result['source'].append('filename_bpm')
 
-            key_from_name = self._extract_key_from_name(str(filepath))
+            key_from_name = self._extract_key_from_name(os.path.basename(filepath))
             if key_from_name and not result['key']:
                 result['key'] = key_from_name
                 result['source'].append('filename_key')
@@ -137,7 +155,7 @@ class AudioAnalyzer:
                 result['source'].append('default_type')
 
             if not result['genre']:
-                result['genre'] = 'Outros'
+                result['genre'] = self._fallback_genre_from_pack(filepath)
                 result['source'].append('default_genre')
 
             # Final suppression pass — authoritative regardless of source.
@@ -358,6 +376,22 @@ class AudioAnalyzer:
         valid_keys = ['C', 'C#', 'Db', 'D', 'D#', 'Eb', 'E', 'F', 'F#', 'Gb', 'G', 'G#', 'Ab', 'A', 'A#', 'Bb', 'B',
                       'Cm', 'C#m', 'Dbm', 'Dm', 'D#m', 'Ebm', 'Em', 'Fm', 'F#m', 'Gbm', 'Gm', 'G#m', 'Abm', 'Am', 'A#m', 'Bbm', 'Bm']
 
+        # Full note-name spelling ("Cmin", "D#Maj", "Ebmin") — checked first
+        # since it's even less ambiguous than a single-letter tag. Validated
+        # against this library: 932 real audio filenames use this exact
+        # convention and it was previously unrecognized entirely — the
+        # bracket/underscore single-letter patterns below can't match a
+        # 4-6 character token like "Cmin". Needs its own capture-and-build
+        # step (not just "is the capture group in valid_keys") because the
+        # min/maj suffix has to become the "m" suffix or no suffix.
+        full_match = re.search(r'([A-G])([#b]?)(min|maj)', filename, re.IGNORECASE)
+        if full_match:
+            letter = full_match.group(1).upper()
+            accidental = '#' if full_match.group(2) == '#' else ('b' if full_match.group(2) else '')
+            key = f"{letter}{accidental}m" if full_match.group(3).lower() == 'min' else f"{letter}{accidental}"
+            if key in valid_keys:
+                return key
+
         for pattern in patterns:
             match = re.search(pattern, filename, re.IGNORECASE)
             if match:
@@ -365,6 +399,57 @@ class AudioAnalyzer:
                 if key in valid_keys:
                     return key
         return None
+
+    # Real-data check (166,808 files across all 3 source folders): these
+    # top-level names aren't packs themselves, they're aggregator folders
+    # that bundle many distinct packs one level down (e.g. every Splice
+    # download lands under a shared "SPLICE" folder; "AlgonautContent" is
+    # a plugin's own content root with "Packs Installed" inside it holding
+    # the real pack names). Using them verbatim would dump ~38k files
+    # across only 3 fallback "genres" instead of their real pack names.
+    GENERIC_PACK_CONTAINERS = {
+        'splice', 'slate samples', 'algonautcontent', 'packs installed',
+    }
+
+    def _resolve_pack_name(self, filepath):
+        """Return the source pack's own folder name for a file, skipping
+        generic aggregator folders (see GENERIC_PACK_CONTAINERS). Returns
+        None if the file has no pack folder to name it after (sits
+        directly in the source root) or the source dir isn't known."""
+        source_dir = self.config.get('_source_dir')
+        if not source_dir:
+            return None
+
+        try:
+            rel = Path(filepath).resolve().relative_to(source_dir)
+        except ValueError:
+            return None
+
+        parts = rel.parts[:-1]  # drop the filename itself
+        if not parts:
+            return None
+
+        for part in parts:
+            if part.lower() not in self.GENERIC_PACK_CONTAINERS:
+                return part
+        return parts[-1]
+
+    def _fallback_genre_from_pack(self, filepath):
+        """When no genre keyword matches, resolve the source pack's own
+        folder name to a real genre first (see `pack_genre_overrides` in
+        genre_mapping.json — populated by researching artist/label/pack
+        names that don't self-describe their genre, e.g. 'Deadmau5' ->
+        'Progressive House'). If the pack has no researched genre yet,
+        fall back to the pack folder name itself (e.g. 'Maschine Samples')
+        instead of a meaningless generic bucket — a real library name is
+        more useful for browsing than 'Outros'."""
+        pack_name = self._resolve_pack_name(filepath)
+        if pack_name is None:
+            return 'Outros'
+
+        overrides = self.config.get('pack_genre_overrides', {})
+        researched_genre = overrides.get(pack_name) or overrides.get(pack_name.lower())
+        return researched_genre or pack_name
 
     def _extract_genre_from_path(self, filepath):
         """Extract genre from file path"""

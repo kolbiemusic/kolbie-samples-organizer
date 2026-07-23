@@ -34,6 +34,7 @@ class FileOrganizer:
         self.destination_root = Path(destination_root)
         self.validator = FileValidator()
         self.copied_files = []
+        self.skipped_files = []
         self.failed_files = []
 
     def calculate_destination_path(self, metadata):
@@ -112,10 +113,23 @@ class FileOrganizer:
             # Create destination directory
             dest_dir.mkdir(parents=True, exist_ok=True)
 
-            # Check if file already exists in destination (duplicated)
+            content_hash = metadata.get('content_hash')
+
+            # Same computed name can legitimately belong to two DIFFERENT
+            # files — checked against this library, e.g. 5 of 9 files named
+            # "Perc.wav" across different packs have different content. A
+            # plain "dest exists -> skip" (the original check here) silently
+            # drops the second one. Only treat it as "already migrated" when
+            # the content hash actually matches; otherwise disambiguate with
+            # a short hash suffix instead of overwriting/dropping the file.
             if dest_path.exists():
-                logger.info(f"File already exists in destination: {dest_path}")
-                return None
+                existing_hash = self.validator.get_file_hash(dest_path) if content_hash else None
+                if content_hash and existing_hash == content_hash:
+                    logger.info(f"File already exists in destination (same content, skipping): {dest_path}")
+                    self.skipped_files.append(str(dest_path))
+                    return None
+                dest_path = self._disambiguate(dest_path, content_hash)
+                logger.info(f"Name collision with different content — disambiguated to: {dest_path}")
 
             # Copy file
             shutil.copy2(source_path, dest_path)
@@ -133,6 +147,17 @@ class FileOrganizer:
             logger.error(f"Error copying file {source_path}: {e}")
             self.failed_files.append(str(source_path))
             return None
+
+    def _disambiguate(self, dest_path, content_hash):
+        """Append a short content-hash suffix so a same-name-different-content collision keeps both files."""
+        suffix_tag = (content_hash or 'dup')[:6]
+        stem, ext = dest_path.stem, dest_path.suffix
+        candidate = dest_path.parent / f"{stem} [{suffix_tag}]{ext}"
+        n = 1
+        while candidate.exists():
+            candidate = dest_path.parent / f"{stem} [{suffix_tag}-{n}]{ext}"
+            n += 1
+        return candidate
 
     def ensure_no_duplicates_in_dest(self):
         """Check for duplicates in destination folder"""
@@ -155,6 +180,7 @@ class FileOrganizer:
         """Get migration statistics"""
         return {
             'copied': len(self.copied_files),
+            'skipped': len(self.skipped_files),
             'failed': len(self.failed_files),
             'total_dest_files': len(list(self.destination_root.rglob('*')))
         }

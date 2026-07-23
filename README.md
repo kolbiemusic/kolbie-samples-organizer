@@ -1,274 +1,274 @@
-# KOLBIE SAMPLES - Audio File Organizer
+# KOLBIE SAMPLES - Organizador de Áudio, MIDI e Presets
 
-Ferramenta profissional para organizar e catalogar grandes bibliotecas de samples de áudio com extração automática de metadados (BPM, tonalidade, gênero, Loop vs One-shot).
+Duas ferramentas complementares para organizar e catalogar uma biblioteca
+grande de produção musical, com extração automática de metadados:
+`migrate_samples.py` para arquivos de áudio, `migrate_midi_presets.py`
+para MIDI e presets de synth/DAW. Cada uma escreve numa árvore de destino
+separada — nunca uma dentro da outra.
 
 ## 📋 Características
 
-- ✅ Análise automática de BPM e tonalidade
-- ✅ Detecção de Loop vs One-shot
-- ✅ Classificação inteligente de gênero
-- ✅ Remoção de duplicatas (MD5)
+**Pipeline de áudio** (`migrate_samples.py`):
+- ✅ Análise automática de BPM e tonalidade (meta-evento/tag → nome de arquivo → análise de áudio)
+- ✅ Detecção de Loop vs One-shot vs FX por comportamento, não duração
+- ✅ Classificação inteligente de gênero e subgênero (Melodic House ≠ House, Deep Techno ≠ Techno...)
+- ✅ Brilho espectral (Escuro/Medio/Claro/Full_Spectro)
+- ✅ Remoção de duplicatas + desambiguação de colisão de nome, ambos por hash MD5
 - ✅ Validação de integridade de áudio
-- ✅ Estrutura hierárquica customizável
+
+**Pipeline de MIDI + Presets** (`migrate_midi_presets.py`):
+- ✅ Tempo/compasso exato via meta-evento, com fallback por nome de arquivo quando ausente
+- ✅ Tonalidade: nome de arquivo (intenção explícita) > heurística por notas (estatística)
+- ✅ Presets: parse real de conteúdo quando o formato permite (Serum/Vital/sfz), indexação por nome nos formatos binários sem documentação
+- ✅ Categoria por abreviação de nome (`PD`→Pad, `SQ`→Sequence, `BS`→Bass...)
+
+**Compartilhado pelos dois**:
+- ✅ Paralelismo com auto-calibração (sem número fixo hardcoded)
 - ✅ Geração de índices CSV, JSON e relatórios HTML
-- ✅ Execução iterativa (1 pasta por vez)
-- ✅ Resume automático se parar
+- ✅ Execução iterativa (1 pasta fonte por vez), resume automático se parar
 
 ## 🚀 Quick Start
 
-### 1. Setup (30 minutos - uma única vez)
+### 1. Setup (uma única vez)
 
 ```bash
-# Instalar dependências
 pip install -r requirements.txt
-
-# Criar estrutura de destino
-mkdir -p /Volumes/SAMPLES\ \&\ LOOPS/KOLBIE\ SAMPLES/{_METADATA,_DOCUMENTATION}
 ```
 
-### 2. Teste Piloto (100 arquivos aleatórios)
+### 2. Teste Piloto (amostra pequena, dry-run)
 
 ```bash
-python migrate_samples.py \
+# Áudio
+python3 migrate_samples.py \
   --source-dir "/Volumes/Gui 2TB Dados/-ELETRONIC MUSIC-" \
   --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" \
-  --dry-run \
-  --sample-size 100 \
-  --verbose
+  --dry-run --sample-size 150 --verbose
+
+# MIDI + Presets
+python3 migrate_midi_presets.py \
+  --source-dir "/Volumes/Gui 2TB Dados/-ELETRONIC MUSIC-" \
+  --dry-run --sample-size 150 --verbose
 ```
 
-### 3. CICLO 1: -ELETRONIC MUSIC- (20.349 arquivos, 176 GB)
+### 3. CICLO 1: `-ELETRONIC MUSIC-`
 
 ```bash
-# Simular primeiro
-python migrate_samples.py \
-  --source-dir "/Volumes/Gui 2TB Dados/-ELETRONIC MUSIC-" \
-  --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" \
-  --dry-run \
-  --verbose
+# Áudio — simular primeiro, depois rodar de verdade
+python3 migrate_samples.py --source-dir "/Volumes/Gui 2TB Dados/-ELETRONIC MUSIC-" --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" --dry-run --verbose
+python3 migrate_samples.py --source-dir "/Volumes/Gui 2TB Dados/-ELETRONIC MUSIC-" --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" --verbose
 
-# Se ok, executar para valer
-python migrate_samples.py \
-  --source-dir "/Volumes/Gui 2TB Dados/-ELETRONIC MUSIC-" \
-  --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" \
-  --verbose
+# MIDI + Presets — mesma lógica, destino tem default próprio (não precisa passar --destination)
+python3 migrate_midi_presets.py --source-dir "/Volumes/Gui 2TB Dados/-ELETRONIC MUSIC-" --dry-run --verbose
+python3 migrate_midi_presets.py --source-dir "/Volumes/Gui 2TB Dados/-ELETRONIC MUSIC-" --verbose
 ```
 
-**Tempo estimado**: ~2h + ~1min de calibração automática (hardware de referência: M1 Pro 8-core + HD externo USB)
-
-**Validação pós-ciclo**:
-- [ ] Revisar 20-30 arquivos em `/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES/`
-- [ ] Verificar estrutura de gêneros
+**Validação pós-ciclo** (nas duas árvores):
+- [ ] Revisar 20-30 arquivos copiados
+- [ ] Verificar estrutura de gêneros/categorias
 - [ ] Validar nomes com BPM/tonalidade
-- [ ] Ver relatório: `KOLBIE_SAMPLES_REPORT_PART1.html`
+- [ ] Ver relatório HTML em `_DOCUMENTATION/Migration_Report.html`
 
-### 4. CICLO 2: SAMPLES ABLETON (153.977 arquivos, 156 GB)
+### 4. CICLO 2 e 3: `SAMPLES ABLETON`, `NEW SAMPLES N PRESETS`
 
-```bash
-python migrate_samples.py \
-  --source-dir "/Volumes/Gui 2TB Dados/SAMPLES ABLETON" \
-  --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES" \
-  --dry-run
-
-# Se ok
-python migrate_samples.py \
-  --source-dir "/Volumes/Gui 2TB Dados/SAMPLES ABLETON" \
-  --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES"
-```
-
-**Tempo estimado**: varia — desde a paralelização da validação (ver seção
-abaixo), essa pasta deixou de ser bloqueada só pela análise.
-
-### 5. CICLO 3: NEW SAMPLES N PRESETS (41.213 arquivos, 74 GB)
-
-```bash
-python migrate_samples.py \
-  --source-dir "/Volumes/Gui 2TB Dados/NEW SAMPLES N PRESETS" \
-  --destination "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES"
-```
+Mesmos comandos, trocando `--source-dir`. Ver [PLAN.md](./PLAN.md) para o
+roteiro completo.
 
 ## ⚙️ Paralelismo automático (`--parallel-workers`)
 
-**Por padrão o script se auto-calibra.** Antes de cada rodada real, ele roda
-uma calibração rápida (~30-60s) testando alguns números de workers candidatos
-— baseados na contagem de núcleos da máquina — num pedaço real dos arquivos
-que vão ser processados nesta pasta, neste disco, agora. Escolhe o mais
-rápido pra cada fase de forma independente:
+Igual nos dois pipelines. **Por padrão o script se auto-calibra.** Antes de
+cada rodada real, testa números de workers candidatos — baseados na
+contagem de núcleos da máquina — contra os arquivos reais que serão
+processados nesta pasta, neste disco, agora:
 
 ```bash
-# Auto (padrão, sem precisar passar nada)
-python migrate_samples.py --source-dir "..." --destination "..."
+# Auto (padrão)
+python3 migrate_samples.py --source-dir "..." --destination "..."
 
-# Forçar um número específico e pular a calibração (útil em testes rápidos
-# repetidos, onde os ~30-60s de calibração pesam mais)
-python migrate_samples.py --source-dir "..." --destination "..." --parallel-workers 4
+# Forçar um número específico e pular a calibração
+python3 migrate_samples.py --source-dir "..." --destination "..." --parallel-workers 4
 
-# Sequencial puro (comportamento original, sem paralelismo)
-python migrate_samples.py --source-dir "..." --destination "..." --parallel-workers 1
+# Sequencial puro
+python3 migrate_samples.py --source-dir "..." --destination "..." --parallel-workers 1
 ```
 
-**Por que auto em vez de um número fixo**: o número certo depende da
-combinação CPU + disco específica de cada máquina, não é uma constante.
-Testando neste projeto: a fase de análise (CPU) tem um "ponto ótimo" que cai
-se você passar dele (mais processos brigando pelo mesmo HD externo, não
-CPU saturando) — variou entre 4-7 dependendo da amostra testada. Mais
-surpreendente ainda: a fase de validação (hash MD5, leitura completa do
-arquivo) às vezes teve **1 thread mais rápido que 8** neste HD específico —
-contrário à intuição de "I/O sempre se beneficia de paralelismo". Um número
-fixo, hardcoded, tuned numa máquina, não se sustenta em outra — por isso a
-calibração roda de novo a cada execução, contra os arquivos reais daquela
-pasta.
+Por quê auto em vez de fixo: ver [DECISIONS.md](./DECISIONS.md#performance-paralelismo-com-auto-calibração---parallel-workers).
+
+## 🎛️ Flag específica do pipeline de MIDI + Presets
+
+```bash
+# Rodar só MIDI ou só presets primeiro (perfis de custo diferentes)
+python3 migrate_midi_presets.py --source-dir "..." --include midi
+python3 migrate_midi_presets.py --source-dir "..." --include presets
+python3 migrate_midi_presets.py --source-dir "..." --include all   # default
+```
 
 ## 📁 Estrutura de Destino
+
+### Pipeline de áudio — `KOLBIE SAMPLES/`
 
 ```
 /Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES/
 ├── House/
 │   ├── Drums/
-│   │   ├── Loops/
-│   │   │   ├── 100-110_bpm/
-│   │   │   ├── 120-130_bpm/
-│   │   │   └── ...
-│   │   ├── Oneshots/
-│   │   │   ├── unknown_bpm/
-│   │   │   └── ...
-│   │   └── FX_Oneshot_Longo/
-│   │       ├── 0-3s/
-│   │       ├── 3-8s/
-│   │       ├── 8-20s/
-│   │       └── 20s+/
-│   ├── Bass/
-│   ├── Pads/
-│   ├── Leads/
-│   ├── Vox/
-│   └── Fx/
-├── Techno/
-├── Deep/
-├── Minimal/
-├── Trap/
-├── DnB/
-├── Ambient/
-├── Outros/
-├── _UNCLASSIFIED/
-├── _METADATA/
-│   └── all_files.json
-├── _DOCUMENTATION/
-│   ├── Migration_Report.html
-│   ├── README.md
-│   └── KOLBIE_SAMPLES_INDEX.csv
+│   │   ├── Loops/{faixa_bpm}/
+│   │   ├── Oneshots/{faixa_bpm}/
+│   │   └── FX_Oneshot_Longo/{faixa_duração}/
+│   ├── Bass/  Pads/  Leads/  Vox/  Fx/
+├── Melodic House/  Melodic Techno/  Deep House/  Deep Techno/
+├── Minimal House/  Minimal Techno/  Progressive House/  Progressive Techno/
+├── Organic House/  Tech House/  Slap House/  Afro House/  Dub Techno/  Big Room/
+├── Techno/  Deep/  Minimal/  Progressive/  Trance/  DnB/  Dubstep/  Trap/
+├── HipHop/  Reggaeton/  Reggae/  Funk/  Afrobeat/  Nu Disco/  Disco/  Synthwave/
+├── LoFi/  Hardstyle/  Garage/  Tribal/  Ambient/  Cinematic/  Experimental/
+├── Drill/  Bachata/  Merengue/  Salsa/  Latin/  RnB/  Soul/  Samba/  Forro/
+├── Axe/  K-Pop/  Pop/  Chillwave/
+├── {Nome do pack original}/   ← fallback, quando nenhum gênero acima bate (ver abaixo)
+├── _METADATA/all_files.json
+├── _DOCUMENTATION/Migration_Report.html
+└── KOLBIE_SAMPLES_INDEX.csv
 ```
 
-## 🔀 Taxonomia de Classificação (Loop / Oneshot / FX)
+Gêneros/subgêneros são data-driven em `config/genre_mapping.json` — ver
+seção de configuração abaixo. A lista acima é a taxonomia atual, não uma
+lista fechada.
 
-A classificação **não usa duração como critério principal** — um sweep de 8s
-não vira "Loop" só por ser mais longo que um kick. O eixo real é
-**loopabilidade e comportamento rítmico**, detectado combinando 3 sinais de
-análise de áudio (`modules/audio_analyzer.py::_classify_sound_type`):
+**Não existe mais pasta genérica "Outros".** Quando nenhuma keyword de
+gênero bate no caminho do arquivo, o pipeline usa o nome real da
+pasta-pack de origem (ex. `Maschine Samples/`, `Bachata Pura/`) — ou, se
+esse pack já foi pesquisado e mapeado (nome de artista/label que não
+descreve o estilo, ex. "Deadmau5"), o gênero real resolvido em
+`pack_genre_overrides`. `Outros` só aparece pro caso raro de um arquivo
+solto direto na raiz da pasta fonte, sem nenhuma pasta acima. Ver
+[DECISIONS.md](./DECISIONS.md) para o rationale completo e
+`audit_genre_coverage.py` abaixo para o passo de verificação.
+
+### Pipeline de MIDI + Presets — `KOLBIE PRESETS:MIDI/`
+
+```
+/Volumes/SAMPLES & LOOPS/KOLBIE PRESETS:MIDI/
+├── MIDI/
+│   └── {Gênero}/{Categoria}/{faixa_tempo}/{compasso}/
+│       └── nome_original [120 bpm] [Cmaj~] [4bars].mid
+├── Presets/
+│   └── {Gênero}/{Categoria}/{FamíliaPlugin}/
+│       └── nome_original.fxp
+├── _METADATA/all_files.json
+├── _DOCUMENTATION/Migration_Report.html
+└── KOLBIE_MIDI_PRESETS_INDEX.csv
+```
+
+## 🔀 Taxonomia de Classificação — Áudio (Loop / Oneshot / FX)
+
+A classificação **não usa duração como critério principal**. O eixo real é
+**loopabilidade e comportamento rítmico** (`audio_analyzer.py::_classify_sound_type`):
 
 | Categoria | Critério real | Exemplo |
 |---|---|---|
-| **Loop** | Onsets regulares (groove) + ponto de loop consistente (início soa como o fim) | Loop de bateria, loop melódico |
+| **Loop** | Onsets regulares (groove) + ponto de loop consistente | Loop de bateria, loop melódico |
 | **Oneshot** | Evento único curto, decai a silêncio, 0-2 onsets | Kick, snare, clap |
 | **FX_Oneshot_Longo** | Evento único mas longo, sem repetição rítmica interna | Sweep, riser, impacto, atmosfera |
 
-Sinais combinados:
-1. **Regularidade de onsets** — coeficiente de variação do intervalo entre onsets; loops têm cadência estável.
-2. **Similaridade início/fim (chroma)** — loops são feitos para repetir, então o final "conecta" com o começo.
-3. **Formato do envelope de energia** — one-shots (curtos ou longos) decaem a quase-silêncio no final; loops sustentam ou repetem energia.
-
-Como FX longos não têm tempo, são organizados por **faixa de duração**
-(`0-3s`, `3-8s`, `8-20s`, `20s+`) em vez de BPM — ver `FileOrganizer.DURATION_RANGES_FX`
-em `modules/file_organizer.py`. Sem sinal de áudio (fallback só por metadados/nome),
-o sistema nunca assume "Loop" — na dúvida, cai em `Oneshot` (curto) ou `FX_Oneshot_Longo` (longo).
-
 Ajustável em `config/genre_mapping.json` → `classification_thresholds`.
 
-## 📊 Outputs
+## 🎹 Categoria — MIDI + Presets (`PD`/`SQ`/`BS`...)
 
-### CSV Index
-`KOLBIE_SAMPLES_INDEX.csv` - Índice completo com:
-- Nome original
-- Caminho novo
-- BPM
-- Tonalidade
-- Gênero
-- Tipo
-- Classificação
-- Duração
+Extraída do **nome do arquivo por token inteiro**, não substring — evita
+que "BS" bata dentro de qualquer palavra que contenha essas letras.
+16 categorias (Bass, Lead, Pad, Pluck, Sequence, Arp, Keys, Chord, Stab,
+Synth, Fx, Vocal, Brass, Strings, Organ, Drums), cada uma com abreviação +
+forma completa. Ajustável em `config/preset_mapping.json` → `category_keywords`.
 
-### JSON Metadata
-`_METADATA/all_files.json` - Todos os metadados em JSON para:
-- Busca programática
-- Importação em DAW/software
-- Análise estatística
+## 📊 Outputs (iguais nos dois pipelines)
 
-### HTML Report
-`_DOCUMENTATION/Migration_Report.html` - Relatório visual com:
-- Total de arquivos processados
-- Distribuição por gênero
-- Distribuição por tipo
-- Distribuição por BPM
-- Estatísticas gerais
+- **CSV Index** — índice completo (nome original, caminho novo, metadados extraídos)
+- **JSON Metadata** (`_METADATA/all_files.json`) — todos os metadados, incluindo proveniência (`source`) de cada campo — pra saber se um valor veio de meta-evento exato, nome de arquivo, ou heurística
+- **HTML Report** (`_DOCUMENTATION/Migration_Report.html`) — distribuição por gênero/tipo/categoria, estatísticas gerais
 
 ## 🔧 Configuração
 
-### Adicionar Gêneros
+### Adicionar gêneros (compartilhado pelos dois pipelines)
 
-Editar `config/genre_mapping.json`:
+Editar `config/genre_mapping.json` → `genre_keywords`. **Ordem importa**:
+subgêneros compostos devem vir antes do gênero pai genérico, senão o pai
+"engole" o composto:
 
 ```json
 {
   "genre_keywords": {
-    "House": ["house", "deep house", "tech house"],
-    "Seu_Genero": ["keyword1", "keyword2"]
+    "Deep House": ["deep house"],
+    "House": ["house", "acid house"],
+    "Seu_Subgenero": ["keyword1"]
   }
 }
 ```
 
-### Ajustar Tipo de Instrumento
+### Ajustar tipo de instrumento (só pipeline de áudio)
 
 ```json
 {
   "type_keywords": {
-    "Drums": ["drum", "kick", "snare"],
+    "Drums": ["drum", "kick", "snare", "perc"],
     "Seu_Tipo": ["keyword1"]
   }
 }
 ```
 
+### Adicionar plugin/categoria de preset (só pipeline de MIDI + Presets)
+
+Editar `config/preset_mapping.json` → `extension_plugin_map` (extensão →
+família de plugin) e `category_keywords` (token de nome → categoria).
+
+### Gênero de pack de artista/label (`pack_genre_overrides`)
+
+Quando o nome da pasta-pack é um artista/produtor/label em vez de uma
+palavra de estilo (ex. `Deadmau5`, `KSHMR`), nenhuma keyword resolve —
+o gênero só existe pesquisando quem é o artista. Adicionar em
+`config/genre_mapping.json` → `pack_genre_overrides`, chave = nome exato
+da pasta de origem:
+
+```json
+{
+  "pack_genre_overrides": {
+    "Deadmau5": "Progressive House",
+    "Nome Exato Da Pasta Do Pack": "Gênero Real"
+  }
+}
+```
+
+## 🔍 Auditoria pré-voo (`audit_genre_coverage.py`)
+
+**Passo obrigatório antes de rodar um ciclo novo**, ou depois de qualquer
+mudança em `genre_mapping.json`. Varre o(s) source dir(s) só por
+caminho/keyword (sem carregar áudio — leva segundos, não horas) e reporta
+três níveis: gênero por keyword cadastrada, gênero já resolvido por
+pesquisa (`pack_genre_overrides`), e pastas ainda sem gênero conhecido
+(candidatas à próxima pesquisa).
+
+```bash
+python3 audit_genre_coverage.py --source-dir "/caminho/da/pasta/fonte"
+python3 audit_genre_coverage.py --all-known-sources   # varre as 3 pastas do projeto
+```
+
 ## 📝 Convenção de Nomes
 
-Os arquivos copiados seguem o padrão:
+**Áudio**: `nome_original [BPM bpm] [Tonalidade] [Brilho].wav` — colchete
+inteiro omitido quando o campo não se aplica (nunca um placeholder `[_]`).
 
-```
-[ORIGINAL_NAME] [BPM bpm] [TONALIDADE].wav
-
-Exemplos:
-- Kick_House_01 [120 bpm] [Am].wav
-- Loop_Bass_Deep [110 bpm] [E].wav
-- Snare_01 [120 bpm] [_].wav  (tonalidade desconhecida)
-```
+**MIDI**: `nome_original [BPM bpm] [Tonalidade] [Nbars].mid` — `~` depois
+da tonalidade só quando ela vem de heurística (`[Cmaj~]`); vinda de
+meta-evento ou do próprio nome do arquivo, sem `~` (`[Cmaj]`).
 
 ## 🔍 Buscando Arquivos
 
-### Por BPM
 ```bash
-ls /Volumes/SAMPLES\ \&\ LOOPS/KOLBIE\ SAMPLES/House/Drums/Loops/120-130_bpm/
-```
+# Por gênero (áudio)
+ls "/Volumes/SAMPLES & LOOPS/KOLBIE SAMPLES/Melodic Techno/"
 
-### Por Gênero
-```bash
-ls /Volumes/SAMPLES\ \&\ LOOPS/KOLBIE\ SAMPLES/Techno/
-```
+# Por categoria (MIDI/presets)
+ls "/Volumes/SAMPLES & LOOPS/KOLBIE PRESETS:MIDI/Presets/Techno/Bass/"
 
-### Por Tipo
-```bash
-ls /Volumes/SAMPLES\ \&\ LOOPS/KOLBIE\ SAMPLES/House/Bass/
-```
-
-### Usando CSV
-```bash
-grep "120 bpm" KOLBIE_SAMPLES_INDEX.csv | grep "House" | grep "Bass"
+# Usando CSV
+grep "120 bpm" KOLBIE_SAMPLES_INDEX.csv | grep "House"
 ```
 
 ## ⚠️ Troubleshooting
@@ -278,37 +278,20 @@ grep "120 bpm" KOLBIE_SAMPLES_INDEX.csv | grep "House" | grep "Bass"
 pip install -r requirements.txt --upgrade
 ```
 
-### Erro: "Permission denied"
-```bash
-# Verificar permissões
-ls -la /Volumes/SAMPLES\ \&\ LOOPS/
-# Se necessário
-sudo chown -R $USER /Volumes/SAMPLES\ \&\ LOOPS/
-```
+### Formatos não suportados
+`.ncw` (Native Instruments) e `.rx2` (Propellerhead REX2) são áudio real
+mas em formato proprietário sem decoder disponível — fora de escopo dos
+dois pipelines, ficam para trás intencionalmente.
 
 ### Parou no meio?
-O script salva progresso, apenas execute novamente - retoma de onde parou
-
-## 📈 Próximos Passos Após Migração
-
-1. **Importar em DAW**
-   - Abrir índice CSV em seu DAW favorito
-   - Criar pack de samples
-   - Usar tags BPM para browser
-
-2. **Otimizar Metadados**
-   - Revisar arquivos não-classificados em `_UNCLASSIFIED/`
-   - Renomear/reorganizar manualmente se necessário
-
-3. **Backup**
-   - Copiar estrutura final para backup externo
-   - Manter origem como fallback por 30 dias
+Os dois scripts salvam progresso via cópia idempotente — rode de novo, o
+que já foi copiado (mesmo hash) é pulado automaticamente.
 
 ## 📞 Support
 
-- Logs em `logs/migration.log`
-- Relatórios em `_DOCUMENTATION/Migration_Report.html`
-- Índice completo em `_METADATA/all_files.json`
+- Relatórios em `_DOCUMENTATION/Migration_Report.html` de cada árvore
+- Índice completo em `_METADATA/all_files.json` de cada árvore
+- Rationale técnico completo de cada decisão: [DECISIONS.md](./DECISIONS.md)
 
 ## 📄 License
 
