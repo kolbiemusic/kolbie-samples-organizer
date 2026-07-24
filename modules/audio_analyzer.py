@@ -106,7 +106,7 @@ class AudioAnalyzer:
             try:
                 y, sr = librosa.load(filepath, sr=None, mono=True)
 
-                if not result['classification'] and duration:
+                if not result['classification'] and duration is not None:
                     classification = self._classify_sound_type(y, sr, duration)
                     result['classification'] = classification
                     result['source'].append('analysis_classification')
@@ -144,11 +144,20 @@ class AudioAnalyzer:
             # Duration alone can't tell a Loop from a long FX one-shot (e.g. an
             # 8s riser has no groove), so without audio signal we can only split
             # short percussive hits from "everything else long" — never guess Loop.
-            if not result['classification'] and duration:
+            if not result['classification'] and duration is not None:
                 thresholds = self.config['classification_thresholds']
                 short_max = thresholds['short_oneshot_max_duration_seconds']
                 result['classification'] = 'Oneshot' if duration < short_max else 'FX_Oneshot_Longo'
                 result['source'].append('heuristic_duration')
+
+            # Last-resort net: duration itself unreadable (None), so neither
+            # heuristic above could fire. Rather than leave classification
+            # None (which later crashes path-building expecting a string),
+            # default to Oneshot — the safer guess for content we know
+            # nothing about.
+            if not result['classification']:
+                result['classification'] = 'Oneshot'
+                result['source'].append('heuristic_unknown_duration')
 
             if not result['type']:
                 result['type'] = 'Fx'  # Default type

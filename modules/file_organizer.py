@@ -39,9 +39,12 @@ class FileOrganizer:
 
     def calculate_destination_path(self, metadata):
         """Calculate destination path based on metadata"""
-        genre = metadata.get('genre', 'Outros')
-        type_name = metadata.get('type', 'Fx')
-        classification = metadata.get('classification', 'Oneshot')
+        # `.get(key, default)` only falls back when the key is absent, not
+        # when its value is present but None (e.g. a zero-duration file that
+        # slipped past classification) — `or` catches both cases.
+        genre = metadata.get('genre') or 'Outros'
+        type_name = metadata.get('type') or 'Fx'
+        classification = metadata.get('classification') or 'Oneshot'
         bpm = metadata.get('bpm')
         duration = metadata.get('duration_sec')
 

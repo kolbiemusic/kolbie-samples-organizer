@@ -7,6 +7,7 @@ from mutagen.wave import WAVE
 from mutagen.aiff import AIFF
 from mutagen.flac import FLAC
 from mutagen.mp3 import MP3
+import soundfile as sf
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +37,24 @@ class FileValidator:
 
             return True
         except Exception as e:
+            # mutagen parses the WAV/AIFF's embedded ID3 chunk for tags, and
+            # some real, perfectly playable files (e.g. 24-bit WAVs from
+            # certain sample-pack tools) carry a malformed/truncated ID3
+            # sub-chunk that isn't the actual audio data — mutagen rejects
+            # the whole file for that. soundfile reads the PCM data directly
+            # and ignores tag chunks, so it's the real arbiter of whether the
+            # audio itself is usable before giving up on the file entirely.
+            if ext in {'.wav', '.aif', '.aiff'} and self._soundfile_readable(filepath):
+                return True
             logger.warning(f"Invalid audio file {filepath}: {e}")
             self.invalid_files.append(str(filepath))
+            return False
+
+    def _soundfile_readable(self, filepath):
+        try:
+            sf.info(filepath)
+            return True
+        except Exception:
             return False
 
     def get_file_hash(self, filepath):
@@ -157,5 +174,13 @@ class FileValidator:
 
             return audio.info.length
         except Exception as e:
+            # Same malformed-tag-chunk case as is_valid_audio — fall back to
+            # soundfile, which reads the PCM header directly.
+            if ext in {'.wav', '.aif', '.aiff'}:
+                try:
+                    info = sf.info(filepath)
+                    return info.duration
+                except Exception:
+                    pass
             logger.warning(f"Could not get duration for {filepath}: {e}")
             return None
