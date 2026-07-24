@@ -31,6 +31,7 @@ from tqdm import tqdm
 from modules import (
     MidiAnalyzer, PresetAnalyzer, FileValidator,
     MidiPresetOrganizer, MidiPresetReporter, benchmark_worker_count,
+    preflight_extract_archives,
 )
 from modules.logging_setup import setup_logging
 
@@ -350,6 +351,10 @@ class MidiPresetMigrator:
         self.source_dir = str(Path(source_dir).resolve())
         self.midi_analyzer.source_dir = self.source_dir
         self.preset_analyzer.source_dir = self.source_dir
+
+        # Pre-flight: extract any still-compressed packs so this pass picks
+        # them up, then move the archives to the Trash (never a hard delete).
+        preflight_extract_archives(source_dir, dry_run=dry_run)
 
         files = self.find_files(source_dir, include=include)
         logger.info(f"Found {len(files)} MIDI/preset files")

@@ -16,3 +16,6 @@ logs/*.txt
 # Local test/diagnostic outputs
 /tmp/
 *.json.bak
+
+# Live progress dashboard (regenerated on every run, not source)
+dashboard/

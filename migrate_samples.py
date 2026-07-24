@@ -28,7 +28,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from tqdm import tqdm
 import colorlog
 
-from modules import AudioAnalyzer, FileValidator, FileOrganizer, Reporter, benchmark_worker_count
+from modules import AudioAnalyzer, FileValidator, FileOrganizer, Reporter, benchmark_worker_count, preflight_extract_archives
 
 # Configure logging
 def setup_logging(verbose=False, log_dir='logs'):
@@ -378,6 +378,10 @@ class SampleMigrator:
         # each file's top-level pack folder — stashed on the shared config
         # dict so it rides along to worker processes via initargs.
         self.config['_source_dir'] = str(Path(source_dir).resolve())
+
+        # Pre-flight: extract any still-compressed packs so this pass picks
+        # them up, then move the archives to the Trash (never a hard delete).
+        preflight_extract_archives(source_dir, dry_run=dry_run)
 
         # Phase 1: Find and validate files
         audio_files = self.find_audio_files(source_dir)

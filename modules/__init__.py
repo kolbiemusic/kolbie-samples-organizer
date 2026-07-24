@@ -8,10 +8,11 @@ from .preset_analyzer import PresetAnalyzer
 from .midi_preset_organizer import MidiPresetOrganizer
 from .midi_preset_reporter import MidiPresetReporter
 from .logging_setup import setup_logging as setup_logging_midi_presets
+from .archive_extractor import preflight_extract_archives
 
 __all__ = [
     'AudioAnalyzer', 'FileValidator', 'FileOrganizer', 'Reporter',
     'benchmark_worker_count', 'candidate_worker_counts',
     'MidiAnalyzer', 'PresetAnalyzer', 'MidiPresetOrganizer', 'MidiPresetReporter',
-    'setup_logging_midi_presets',
+    'setup_logging_midi_presets', 'preflight_extract_archives',
 ]
