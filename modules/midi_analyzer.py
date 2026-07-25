@@ -1,22 +1,31 @@
 """
 MIDI metadata extraction via mido.
 
-MIDI is symbolic data, not a waveform — librosa doesn't apply here. Tempo
-and time signature come from exact meta-events (Set Tempo / Time Signature)
-when present — but 93.5% of this library's real .mid files have no Set
-Tempo meta-event at all (most DAWs just don't export one), so tempo falls
-back to the same filename-regex extraction as the audio pipeline (reusing
-its corrected patterns) whenever the meta-event is missing. Key follows a
-similar precedence: an explicit key in the filename is the producer's own
-stated intent, checked first; only when the name has nothing does key fall
-back to a genuine heuristic — a pitch-class histogram correlated against
-Krumhansl-Kessler major/minor profiles, same family of technique as
-chroma-based key detection in audio, applied to exact note data instead of
-a waveform. Because that fallback is a guess, it's flagged with a
-confidence score and the caller (file_organizer-equivalent) tags it with
-"~" in filenames rather than presenting it as ground truth — a
-filename-derived or meta-event key gets no such caveat, since both are
-explicit rather than inferred.
+MIDI is symbolic data, not a waveform — librosa doesn't apply here.
+
+**Tempo priority — reversed 2026-07-25 at explicit user request**: filename
+is now checked first, the Set Tempo meta-event only fills the gap when the
+name has nothing. This is the same "folder/filename text is the majority
+source" rule applied across the whole project (see the audio pipeline's
+`AudioAnalyzer.analyze_file`), extended here even though a tempo meta-event
+is a technical fact about the file's actual playback tempo, not a
+discretionary tag — the user was told this distinction explicitly and
+chose to apply the same priority anyway. `has_tempo_meta` keeps its
+original meaning (`tempo_bpm` came from the meta-event specifically, not
+just "a meta-event exists somewhere in the file") — `midi_preset_reporter.py`
+and `midi_preset_organizer.py` both depend on that exact contract, so it's
+preserved rather than redefined.
+
+Key follows the same precedence it already had before this change: an
+explicit key in the filename is the producer's own stated intent, checked
+first; only when the name has nothing does key fall back to a genuine
+heuristic — a pitch-class histogram correlated against Krumhansl-Kessler
+major/minor profiles, same family of technique as chroma-based key
+detection in audio, applied to exact note data instead of a waveform.
+Because that fallback is a guess, it's flagged with a confidence score and
+the caller (file_organizer-equivalent) tags it with "~" in filenames rather
+than presenting it as ground truth — a filename-derived or meta-event key
+gets no such caveat, since both are explicit rather than inferred.
 
 Each field is extracted in its own try/except. DECISIONS.md documents a
 real bug in the audio pipeline where a single blanket except around a
@@ -207,29 +216,33 @@ class MidiAnalyzer:
         except Exception as e:
             logger.debug(f"Could not read track names from {filepath}: {e}")
 
+        # Filename checked first (priority-order change, 2026-07-25 — see
+        # module docstring). Meta-event below only fills the gap, and only
+        # sets has_tempo_meta when it's the one actually populating
+        # tempo_bpm — that field's contract ("this value is exact") is
+        # relied on elsewhere (midi_preset_reporter.py, midi_preset_organizer.py)
+        # and must keep meaning that, not just "a meta-event exists".
         try:
-            tempo_msg = next(
-                (msg for track in mid.tracks for msg in track
-                 if msg.is_meta and msg.type == 'set_tempo'),
-                None
-            )
-            if tempo_msg is not None:
-                result['tempo_bpm'] = round(mido.tempo2bpm(tempo_msg.tempo), 2)
-                result['has_tempo_meta'] = True
-                result['source'].append('tempo_meta_event')
+            bpm_from_name = _extract_bpm_from_filename(result['filename'], self.bpm_patterns)
+            if bpm_from_name:
+                result['tempo_bpm'] = bpm_from_name
+                result['source'].append('filename_bpm')
         except Exception as e:
-            logger.debug(f"Could not read tempo from {filepath}: {e}")
+            logger.debug(f"Could not extract tempo from filename for {filepath}: {e}")
 
-        # Fallback only when there's no real meta-event — the meta-event,
-        # when present, is exact and always wins.
-        if not result['has_tempo_meta']:
+        if not result['tempo_bpm']:
             try:
-                bpm_from_name = _extract_bpm_from_filename(result['filename'], self.bpm_patterns)
-                if bpm_from_name:
-                    result['tempo_bpm'] = bpm_from_name
-                    result['source'].append('filename_bpm')
+                tempo_msg = next(
+                    (msg for track in mid.tracks for msg in track
+                     if msg.is_meta and msg.type == 'set_tempo'),
+                    None
+                )
+                if tempo_msg is not None:
+                    result['tempo_bpm'] = round(mido.tempo2bpm(tempo_msg.tempo), 2)
+                    result['has_tempo_meta'] = True
+                    result['source'].append('tempo_meta_event')
             except Exception as e:
-                logger.debug(f"Could not extract tempo from filename for {filepath}: {e}")
+                logger.debug(f"Could not read tempo from {filepath}: {e}")
 
         numerator, denominator = None, None
         try:

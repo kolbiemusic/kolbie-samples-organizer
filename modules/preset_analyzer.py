@@ -11,6 +11,13 @@ undocumented proprietary binaries; no attempt is made to read their
 content at all — reverse-engineering ~10 different binary formats for a
 personal sample library has poor ROI compared to just copying+indexing
 them by filename and inferred plugin family.
+
+Category priority — reversed 2026-07-25 at explicit user request: filename
+is checked first, Tier A's parsed content only fills the category in when
+the filename didn't already resolve one. Same "folder/filename text is the
+majority source" rule as the audio pipeline and MIDI tempo, extended here
+too even though Tier A content is a real field read out of the preset's
+own data, not a discretionary tag.
 """
 import json
 import logging
@@ -132,6 +139,22 @@ class PresetAnalyzer:
         except Exception as e:
             logger.debug(f"Could not stat {filepath}: {e}")
 
+        # Filename-based category (BS -> Bass, PD -> Pad, ...) checked FIRST
+        # now (priority-order change, 2026-07-25, explicit user request):
+        # folder/filename text is the majority source across this whole
+        # project — same rule as the audio pipeline and MIDI tempo, applied
+        # here too even though Tier A content is a real field parsed out of
+        # the preset's own data, not a discretionary tag. This is also the
+        # path that populates most Tier B files, which never get
+        # content-parsed at all.
+        try:
+            category = extract_category_from_filename(path.name, self.category_keywords)
+            if category:
+                result['category'] = category
+                result['source'].append('filename_category')
+        except Exception as e:
+            logger.debug(f"Could not determine category from filename for {filepath}: {e}")
+
         if config_tier == 'A' and ext in TIER_A_EXTENSIONS:
             name, category, confidence, method = _parse_tier_a_content(filepath)
             result['parse_confidence'] = confidence
@@ -139,22 +162,10 @@ class PresetAnalyzer:
             if name:
                 result['preset_name'] = name
                 result['source'].append('content_name')
-            if category:
+            # Only fills the category in when the filename didn't already
+            # resolve one — reversed from before, see comment above.
+            if category and result['category'] == self.default_category:
                 result['category'] = category
                 result['source'].append('content_category')
-
-        # Filename-based category (BS -> Bass, PD -> Pad, ...) only fills
-        # in when content parsing didn't already find one — a real
-        # category from inside the preset file outranks a guess from its
-        # name. This is the fallback that actually populates most Tier B
-        # files, which never get content-parsed at all.
-        if result['category'] == self.default_category:
-            try:
-                category = extract_category_from_filename(path.name, self.category_keywords)
-                if category:
-                    result['category'] = category
-                    result['source'].append('filename_category')
-            except Exception as e:
-                logger.debug(f"Could not determine category from filename for {filepath}: {e}")
 
         return result

@@ -30,17 +30,117 @@ hoje) para duas árvores de destino separadas e pesquisáveis:
 
 # Pipeline de áudio
 
-## Taxonomia Loop / Oneshot / FX (`audio_analyzer.py::_classify_sound_type`)
+## Ordem de prioridade da informação (nome/pasta > metadado > áudio)
 
-**Não é baseada em duração.** Um corte fixo de duração classificava sons
-longos sem groove (sweeps, drones) como "Loop" incorretamente. Critério atual,
-por comportamento:
+Decisão explícita do usuário (2026-07-25), vale pra **todos** os campos
+(BPM, key, gênero, tipo, classificação), não só classificação: **o texto do
+nome do arquivo e da pasta é buscado primeiro e é a fonte majoritária;
+metadado embutido (tag ID3/WAV/AIFF) só preenche o que sobrar; análise de
+áudio é o último recurso**, usada só quando nem o texto nem o metadado
+já resolveram — o que também economiza processamento numa biblioteca de
+150k+ arquivos (pula as partes caras da análise — contagem de picos,
+estimativa de tempo, chroma — quando o texto já decidiu).
 
-- **Loop** — onsets regulares + similaridade de chroma início/fim (ponto de
-  loop real)
-- **Oneshot** — ≤2 onsets, decai a silêncio, curto
-- **FX_Oneshot_Longo** — evento único longo sem repetição rítmica
-  (sweep/riser/impacto/drone)
+Por quê metadado vem depois do nome, e não antes: tags ID3 nesta
+biblioteca são preenchidas de forma inconsistente (muitas em branco,
+algumas geradas automaticamente pela ferramenta/DAW que exportou o
+arquivo) e às vezes trazem valor não-curado (ex. uma tag de gênero
+"Melodic House & Techno" que não bate com a taxonomia curada desta
+biblioteca) — o nome que o sound designer/pack deu ao arquivo tende a ser
+mais confiável.
+
+Implementado em `AudioAnalyzer.analyze_file`: Passo 1 (nome/pasta) roda
+primeiro e escreve os campos; Passo 2 (metadado) só preenche o que ainda
+estiver `None`; Passo 3 (áudio) é o fallback final, com os mesmos guards
+de "só computa o que falta" de antes.
+
+## Taxonomia Loop / Oneshot / FX
+
+**Não é baseada em duração pura.** Um corte fixo de duração classificava sons
+longos sem groove (sweeps, drones) como "Loop" incorretamente.
+
+### Passo 1 — texto do nome/caminho tem prioridade (`_classify_from_path`)
+
+Roda antes de qualquer análise de áudio (ver seção acima). Verifica o
+caminho inteiro — pasta E nome do arquivo — pra ambas as palavras-chave,
+nessa ordem:
+
+1. **"one-shot"/"oneshot"** primeiro, sem nenhuma outra condição além de
+   existir no texto. Medido contra as 171.337 arquivos de áudio reais das
+   3 pastas fonte antes de implementar (não convém supor, ver
+   [[feedback_data_pipeline_workflow]]): zero contra-exemplos encontrados
+   em toda a amostra (pasta ou nome do arquivo) — ex. `Diginoiz_Kick.wav`
+   dentro de uma pasta `(One-Shots)` é genuinamente um one-shot mesmo sem
+   repetir a palavra no próprio nome. 5.354 matches no basename + 20.342
+   só na pasta, os dois grupos confirmados.
+2. **"loop"** segundo, e só se `duration >= min_loop_duration_seconds`
+   (o mesmo piso arquitetural que `_classify_sound_type` já usa — nada
+   abaixo de ~1.5s pode ser um loop musical real nesse range de BPM da
+   biblioteca). Esse único piso já resolveu os contra-exemplos reais
+   achados: `Maschine Samples/Loops/Synth/Galbanum12 [128] 36.wav` e
+   `.../Loops/Percussion/Tabla/Tabla02 [130] 03.wav` têm 0.20-0.22s de
+   duração — fisicamente impossível ser loop, são one-shots dentro de uma
+   pasta "Loops" que é só a categoria interna da biblioteca Maschine, não
+   uma descrição real do conteúdo. Fora esse piso de duração, decisão do
+   usuário: bibliotecas/publicadoras raramente colocam one-shots dentro de
+   uma pasta categorizada como loop, então a pasta conta tanto quanto o
+   nome do arquivo — 23.620 matches no basename + 27.028 só na pasta;
+   amostra real de 30 arquivos (decodificados de verdade) achou 77%
+   (23/30) já corretos como Loop pela própria análise de áudio, e os únicos
+   contra-exemplos claros eram sub-piso de duração.
+   - Checar "one-shot" primeiro resolve sozinho o conflito de
+     `Prime Loops Synthwave 2 MULTiFORMAT/One Shots/FX/PhaserWaves_FX.wav`:
+     "Loops" está no nome do *pack* várias pastas acima, mas a pasta
+     imediata do arquivo já diz "One Shots/FX" — como one-shot é checado
+     primeiro, o check de loop nem chega a rodar pra esse caminho.
+   - *(Nota: uma versão anterior deste documento citava
+     `RETRO FUTURE/drum loops/rf_drm130_doggie_hat.wav` como prova de que
+     pasta-só-com-"loop" não era confiável — errado, checado com áudio
+     real depois que o usuário ouviu o arquivo e confirmou que É um loop
+     [3.69s = exatos 2 compassos a 130 BPM]. O erro foi inferir do nome do
+     arquivo ["doggie_hat" soa como um hit de hi-hat] sem nunca checar o
+     áudio de verdade. Corrigido pro exemplo Maschine Samples acima, que
+     não depende de interpretação nenhuma — a duração sozinha já prova.)*
+- Regex com fronteira de palavra (`\bloops?\b`, `\bone\s?shots?\b`) sobre o
+  texto normalizado (`_`/`-` viram espaço, já que o padrão de nomenclatura
+  da biblioteca junta palavras assim e isso quebra `\b` do jeito ingênuo) —
+  não casa "loophole" nem falha em "One_Shots_Sub_Bass".
+- **Guarda defensiva**: os 3 nomes de pasta de classificação que o próprio
+  pipeline gera (`Loop`, `Oneshot`, `FX_Oneshot_Longo`) são excluídos do
+  texto pesquisado — sem isso, checar um caminho de *destino* já migrado
+  faria `FX_Oneshot_Longo` (que contém "Oneshot") se auto-confirmar,
+  travando qualquer re-checagem. É por isso que `fix_classification_v2.py`
+  passa só o nome do arquivo (`clean_stem`), nunca o caminho de destino
+  inteiro, pro pré-check — nesse caso o check de "loop" (que agora também
+  olharia pasta) fica de fato restrito ao nome, porque não sobram pastas
+  de origem reais depois da migração, só as de classificação (excluídas).
+- Não inventamos lista de mais palavras-chave (`"hit"`, `"riser"` etc.) sem
+  evidência — nenhum caso concreto de falha exigiu isso ainda.
+
+### Passo 2 — fallback por análise de áudio (`_classify_sound_type`)
+
+Só roda quando o Passo 1 não achou evidência textual. Critério atual, por
+comportamento (substituiu onset-regularity + chroma-similaridade, ambos
+testados contra a biblioteca real e achados não confiáveis — onset-
+regularidade excluía loops reais com swing/síncope; chroma-similaridade
+media igual para impactos one-shot e loops de verdade):
+
+- Conta picos locais no envelope de energia RMS suavizado — um loop de
+  verdade tem vários ciclos alto/baixo, um one-shot (mesmo longo) tem uma
+  única tendência dominante.
+- **Loop** — picos suficientes (`min_energy_peaks_for_loop`/`_fx`,
+  3 para tipo Fx por causa do caso "banco de one-shots concatenados", 2 pro
+  resto) espalhados até pelo menos metade do arquivo
+  (`min_last_peak_fraction_for_loop`), e duração ≥ `min_loop_duration_seconds`
+  (1.5s — abaixo disso é fisicamente impossível ser um loop musical nesse
+  BPM range).
+- **Oneshot** / **FX_Oneshot_Longo** — sem repetição rítmica, diferenciados
+  só por duração (`short_oneshot_max_duration_seconds`).
+- Limitação conhecida, não resolvida: um "banco" de FX diferentes
+  concatenados num wav longo (ex. 2 risers distintos em 1 arquivo) ainda
+  pode passar como Loop — nenhum sinal de áudio testado até agora
+  (regularidade de onset, chroma, autocorrelação) distingue isso de um loop
+  real de forma limpa.
 
 FX não tem tempo, então é organizado por pasta de duração
 (`0-3s/3-8s/8-20s/20s+`) em vez de faixa de BPM.
@@ -247,14 +347,28 @@ lido, nunca escrito).
 
 ## MIDI: tempo e tonalidade com fallback por nome de arquivo
 
-**Tempo**: meta-evento Set Tempo é exato quando existe, mas **93,5% dos
-arquivos `.mid` reais desta biblioteca não têm um** (a maioria dos DAWs
-não exporta). Desses, ~28% têm o tempo escrito no próprio nome
-(`PML_Telekinesis_127bpm Amin_Pad.mid`) — antes descartado por completo.
-Fallback implementado reaproveitando os mesmos padrões corrigidos de BPM
-do pipeline de áudio, mas **mais conservador**: só aceita o padrão que
-exige a palavra "bpm" literal, não o fallback de bracket/underscore que é
-confiável pra áudio mas *não* pra MIDI — um pack real
+**Tempo**: **prioridade invertida em 2026-07-25, a pedido explícito do
+usuário** — nome do arquivo é checado primeiro, meta-evento Set Tempo só
+preenche quando o nome não tem "bpm" literal nenhum. Antes era o oposto
+(meta-evento sempre vencia por ser um fato técnico exato do arquivo, não
+uma tag solta) — o usuário foi avisado dessa diferença explicitamente
+(meta-evento MIDI não é "metadado" no sentido de tag ID3 descurada, é o
+tempo real de reprodução gravado na estrutura do arquivo) e optou por
+aplicar a mesma regra de prioridade mesmo assim, pela mesma lógica
+"nome/pasta é majoritário" usada em todo o resto do projeto. `has_tempo_meta`
+mantém o significado original (o valor em `tempo_bpm` veio do meta-evento
+especificamente, não só "existe um meta-evento no arquivo") porque
+`midi_preset_reporter.py` e `midi_preset_organizer.py` dependem desse
+contrato exato — por isso o meta-evento só é sequer consultado quando o
+nome não respondeu nada, em vez de rodar sempre e só perder a prioridade.
+
+**93,5% dos arquivos `.mid` reais desta biblioteca não têm meta-evento Set
+Tempo nenhum** (a maioria dos DAWs não exporta). Desses, ~28% têm o tempo
+escrito no próprio nome (`PML_Telekinesis_127bpm Amin_Pad.mid`) — antes
+descartado por completo. Extração reaproveita os mesmos padrões corrigidos
+de BPM do pipeline de áudio, mas **mais conservadora**: só aceita o padrão
+que exige a palavra "bpm" literal, não o fallback de bracket/underscore que
+é confiável pra áudio mas *não* pra MIDI — um pack real
 (`PML_MIDIQ_Stab_Melody_56_Amin_EDM.mid`) tem numeração sequencial de
 faixa no mesmo formato `_NN_` que o padrão de áudio usa pra tempo, e
 fabricou "56 bpm" a partir do índice antes dessa restrição.
@@ -271,7 +385,13 @@ no campo `source`); vinda do nome ou de meta-evento, sem `~`.
 
 - **Tier A** (`.serumpreset`, `.vital`, `.sfz`) — parse real: JSON primeiro,
   texto puro depois, fallback gracioso pra nome-de-arquivo-só se nada
-  parsear (nunca marca como inválido).
+  parsear (nunca marca como inválido). **Categoria: prioridade invertida em
+  2026-07-25** (mesmo pedido do usuário aplicado ao tempo do MIDI acima) —
+  nome do arquivo (`BS`/`PD`/`SQ`...) é checado primeiro, o campo `category`
+  parseado do JSON só preenche quando o nome não resolveu nada. `preset_name`
+  não foi reordenado — não é um campo de categorização, não tem um
+  concorrente textual equivalente no nome genérico do arquivo pra disputar
+  prioridade.
 - **Tier B** (`.fxp`, `.nki`, `.nmsv`, `.repatch`, `.spf`/`.spf2`, `.h2p`,
   `.sxt`/`.flx`/`.kit`, `.exs`) — binários proprietários sem doc estável.
   Copia + indexa por nome/extensão/família de plugin inferida, sem

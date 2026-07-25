@@ -4,8 +4,8 @@
 > execução. Para o *porquê* de cada decisão técnica, ver [DECISIONS.md](./DECISIONS.md).
 > Este documento é o *o quê* e *quando*; DECISIONS.md é o *por quê*.
 
-**Última atualização**: 2026-07-22
-**Status geral**: 🟡 Dois pipelines prontos, corrigidos e testados — aguardando aprovação para rodar os ciclos completos
+**Última atualização**: 2026-07-25
+**Status geral**: 🟡 Os 3 ciclos de migração já rodaram de verdade (áudio + MIDI/Presets), mas um bug de classificação Loop/Oneshot/FX foi achado depois — usuário apagou a árvore de destino de áudio (`KOLBIE SAMPLES/`) e ela precisa ser reconstruída do zero após validar o fix. `KOLBIE PRESETS:MIDI/` está intacta. Ver item 7 e [DECISIONS.md](./DECISIONS.md) para o estado atual do fix.
 
 ---
 
@@ -214,6 +214,32 @@ Mesmos dois comandos. Fumaça já testada (dry-run) nesta sessão, sem erro.
 
 ## 7. Pendências sinalizadas (não aprovadas ainda)
 
+- **Classificação Loop/Oneshot/FX + prioridade de campos** (`KOLBIE SAMPLES/`
+  — áudio): bug achado em revisão manual pós-Ciclo-3 — o classificador só
+  olhava o áudio, nunca o texto do nome/pasta original (ex.:
+  `PMVP_Lead_Loop_136_Amin_Spooky.wav` foi parar em `FX_Oneshot_Longo`
+  mesmo dizendo "Loop" no próprio nome). **Corrigido e ampliado em
+  2026-07-25** em duas rodadas:
+  1. Texto do nome/pasta virou prioridade sobre a análise de áudio pra
+     classificação (`AudioAnalyzer._classify_from_path`).
+  2. A pedido explícito do usuário, a regra foi ampliada e reordenada:
+     agora **todos os campos** (BPM, key, gênero, tipo, classificação)
+     seguem nome/pasta > metadado embutido (tag ID3) > análise de áudio
+     (última opção, só se precisar — economiza processamento). Pra
+     classificação especificamente, "one-shot" conta em qualquer lugar do
+     caminho (pasta ou arquivo, checado primeiro) e "loop" também passou a
+     contar na pasta, não só no nome do arquivo, desde que a duração seja
+     fisicamente possível pra um loop (≥1.5s). Ver DECISIONS.md § "Ordem de
+     prioridade da informação" e § "Taxonomia Loop/Oneshot/FX".
+  Validado contra 24 casos conhecidos (bons e ruins) + amostras reais de
+  áudio decodificado (0 divergências, 0 regressões) — incluindo um caso em
+  que uma suposição minha (não uma checagem real) sobre um arquivo
+  específico estava errada, corrigida depois que o usuário ouviu o arquivo
+  e confirmou que era loop (ver DECISIONS.md pra nota completa).
+  **Próximo passo**: rodar um novo teste `--sample-size 500` real pro
+  usuário revisar manualmente, igual da vez passada, antes de aprovar a
+  reconstrução completa da árvore `KOLBIE SAMPLES/` (153k+ arquivos, os 3
+  ciclos de novo).
 - `.ncw`/`.rx2` (~8.700 arquivos de áudio real em formato proprietário) —
   **decidido: fora de escopo, não vamos usar.**
 - Avisos do `librosa` (`n_fft too large`) em amostras muito curtas —

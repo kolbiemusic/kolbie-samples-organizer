@@ -113,10 +113,10 @@
   ],
   "classification_thresholds": {
     "short_oneshot_max_duration_seconds": 2.0,
-    "loop_similarity_threshold": 0.55,
-    "onset_regularity_cv_threshold": 0.35,
-    "min_onsets_for_rhythmic": 3,
-    "tail_silence_ratio": 0.15
+    "min_loop_duration_seconds": 1.5,
+    "min_energy_peaks_for_loop": 2,
+    "min_energy_peaks_for_loop_fx": 3,
+    "min_last_peak_fraction_for_loop": 0.5
   },
   "duration_ranges_fx": [
     [0, 3, "0-3s"],

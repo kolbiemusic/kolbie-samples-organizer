@@ -5,6 +5,8 @@ import logging
 import librosa
 import numpy as np
 from pathlib import Path
+from scipy.signal import find_peaks
+from scipy.ndimage import uniform_filter1d
 from .file_validator import FileValidator
 
 logger = logging.getLogger(__name__)
@@ -16,6 +18,58 @@ class AudioAnalyzer:
     # final classification says the field doesn't apply.
     BPM_SOURCE_TAGS = {'filename_bpm', 'analysis_bpm', 'metadata_bpm'}
     KEY_SOURCE_TAGS = {'filename_key', 'analysis_key', 'metadata_key'}
+
+    # Loop/Oneshot keyword checks for _classify_from_path. Folder AND
+    # filename both count for both keywords (explicit user directive,
+    # 2026-07-25: sample-pack publishers rarely file a one-shot under a
+    # folder categorized as loops, or vice versa — trust that text before
+    # spending time on audio analysis). Checked against all 171,337 audio
+    # files across the 3 source folders before implementing — see
+    # DECISIONS.md:
+    #   - "one-shot"/"oneshot" is checked FIRST, no extra guard needed:
+    #     zero counter-examples found anywhere in the sampled evidence
+    #     (folder or filename) — e.g. `Diginoiz_Kick.wav` inside a
+    #     `(One-Shots)` folder is genuinely a one-shot even though the
+    #     filename itself never repeats the word. 5,354 basename matches +
+    #     20,342 folder-only matches, both groups sampled and confirmed.
+    #   - "loop" is checked second, and additionally requires
+    #     duration >= min_loop_duration_seconds (the same architectural
+    #     floor _classify_sound_type already enforces — nothing under
+    #     ~1.5s can be a real musical loop at this library's BPM range).
+    #     That one safeguard is enough: the only real counter-examples
+    #     found in a folder-level sample (e.g.
+    #     `Maschine Samples/Loops/Synth/Galbanum12 [128] 36.wav` at 0.20s)
+    #     are all sub-floor one-shots, not a genuine folder-naming mistake
+    #     by the pack's publisher. 23,620 basename matches + 27,028
+    #     folder-only matches; a 30-file real-audio spot-check of the
+    #     folder-only group found 77% already correctly resolved as Loop by
+    #     audio analysis alone, and every clear counter-example was
+    #     sub-floor.
+    #   - Checking one-shot first also resolves same-path conflicts
+    #     correctly without extra logic: a path like
+    #     `Prime Loops Synthwave 2 MULTiFORMAT/One Shots/FX/PhaserWaves_FX.wav`
+    #     has "Loops" in the *pack's own brand name* several levels up, but
+    #     its immediate folder says "One Shots" — checking oneshot first
+    #     means the loop check never even runs for this path, so the more
+    #     specific/closer signal wins.
+    #   - No other keywords ("hit", "riser", "impact" etc.) added — no
+    #     concrete failing example has required them yet, same
+    #     "don't invent keyword lists without evidence" discipline as
+    #     everywhere else in this project.
+    _LOOP_KEYWORD_RE = re.compile(r'\bloops?\b', re.IGNORECASE)
+    _ONESHOT_KEYWORD_RE = re.compile(r'\bone\s?shots?\b', re.IGNORECASE)
+
+    # The pipeline's own destination-folder classification labels (see
+    # FileOrganizer). If _classify_from_path is ever called with a
+    # destination-tree path instead of a pre-migration source path, these
+    # segments must not leak into the oneshot full-path check below — a
+    # "FX_Oneshot_Longo" folder segment literally contains the word
+    # "Oneshot", which would otherwise just self-confirm whatever
+    # classification a file already has instead of independently checking
+    # it. Filtered out defensively even though today's only destination-path
+    # caller (fix_classification_v2.py) already avoids this by passing the
+    # bare filename, not the full path.
+    _CLASSIFICATION_FOLDER_NAMES = {'loop', 'oneshot', 'fx_oneshot_longo'}
 
     def __init__(self, config):
         self.config = config
@@ -38,53 +92,41 @@ class AudioAnalyzer:
         }
 
         try:
-            # Step 1: Extract existing metadata
-            existing_metadata = self.validator.extract_existing_metadata(filepath)
-            if existing_metadata['bpm']:
-                result['bpm'] = existing_metadata['bpm']
-                result['source'].append('metadata_bpm')
-            if existing_metadata['key']:
-                result['key'] = existing_metadata['key']
-                result['source'].append('metadata_key')
-            if existing_metadata['genre']:
-                # Normalize through the same keyword taxonomy as filename
-                # genre, don't trust the raw ID3 tag verbatim — checked
-                # against this library, some files carry uncurated tags
-                # like "Melodic House & Techno" or "Organic House" that
-                # would otherwise create one-off folders alongside the
-                # curated House/Techno/Deep buckets, fragmenting the same
-                # genre across multiple differently-spelled top-level
-                # folders. If the tag doesn't match any known genre,
-                # falls through to filename-based detection instead of
-                # trusting an arbitrary uncontrolled string.
-                normalized_genre = self._extract_genre_from_path(existing_metadata['genre'])
-                if normalized_genre:
-                    result['genre'] = normalized_genre
-                    result['source'].append('metadata_genre')
-
-            # Get duration
+            # Duration first — needed by the path-priority classification
+            # check below, and cheap (reads a header via mutagen/soundfile,
+            # no audio decode).
             duration = self.validator.get_audio_duration(filepath)
             result['duration_sec'] = duration
 
-            # Step 2: Try to extract from filename. Basename only, same
-            # reasoning as type below: searching the full path let a parent
-            # folder's track number or catalog code get read as this file's
-            # BPM/key. Validated against this library — that bug both
-            # fabricated values from unrelated folder numbers AND, worse,
-            # silently swallowed real basename BPMs when an earlier bogus
-            # match elsewhere in the path exhausted the pattern first.
+            # Step 1: folder/filename text — highest priority (explicit user
+            # directive, 2026-07-25): search the path first, embedded
+            # metadata second, audio analysis last — and only if the first
+            # two didn't already answer, which also saves real decode/
+            # analysis time on a 150k+-file library. The sound designer's
+            # own naming is generally more curated and reliable than
+            # whatever a DAW or export tool wrote into an ID3 tag.
+            #
+            # Basename only for bpm/key/type: searching the full path let a
+            # parent folder's track number, catalog code, or unrelated word
+            # get read as this file's own value. Validated against this
+            # library — that bug both fabricated values from unrelated
+            # folder numbers AND, worse, silently swallowed real basename
+            # values when an earlier bogus match elsewhere in the path
+            # exhausted the pattern first. Genre and classification
+            # intentionally search the full path instead — see their own
+            # extraction methods for why that's safe for those two fields.
             bpm_from_name = self._extract_bpm_from_name(os.path.basename(filepath))
-            if bpm_from_name and not result['bpm']:
+            if bpm_from_name:
                 result['bpm'] = bpm_from_name
                 result['source'].append('filename_bpm')
 
             key_from_name = self._extract_key_from_name(os.path.basename(filepath))
-            if key_from_name and not result['key']:
+            if key_from_name:
                 result['key'] = key_from_name
                 result['source'].append('filename_key')
 
             genre_from_name = self._extract_genre_from_path(str(filepath))
-            if genre_from_name and not result['genre']:
+            if genre_from_name:
                 result['genre'] = genre_from_name
                 result['source'].append('filename_genre')
 
@@ -95,11 +137,42 @@ class AudioAnalyzer:
             # ".../Future Bass Track/..." gets tagged type=Bass from the
             # folder text alone, with nothing to do with the file itself.
             type_from_name = self._extract_type_from_name(os.path.basename(filepath))
-            if type_from_name and not result['type']:
+            if type_from_name:
                 result['type'] = type_from_name
                 result['source'].append('filename_type')
 
-            # Step 3: Audio analysis. Classification runs first — BPM and key
+            classification_from_path = self._classify_from_path(filepath, duration)
+            if classification_from_path:
+                result['classification'] = classification_from_path
+                result['source'].append('filename_classification')
+
+            # Step 2: embedded metadata (ID3/WAV/AIFF tags) — only fills
+            # whatever the path text left unset. Checked second, not first:
+            # tags across this library are inconsistently populated (many
+            # blank, some auto-generated by whatever DAW/tool exported the
+            # file) and sometimes carry uncurated values — e.g. a genre tag
+            # reading "Melodic House & Techno" that doesn't match this
+            # library's curated taxonomy — less reliable than the sound
+            # designer's own filename/folder naming.
+            existing_metadata = self.validator.extract_existing_metadata(filepath)
+            if existing_metadata['bpm'] and not result['bpm']:
+                result['bpm'] = existing_metadata['bpm']
+                result['source'].append('metadata_bpm')
+            if existing_metadata['key'] and not result['key']:
+                result['key'] = existing_metadata['key']
+                result['source'].append('metadata_key')
+            if existing_metadata['genre'] and not result['genre']:
+                # Normalize through the same keyword taxonomy as filename
+                # genre, don't trust the raw ID3 tag verbatim (see reasoning
+                # above). Falls through to Step 3's genre fallback if the
+                # tag doesn't match any known genre either.
+                normalized_genre = self._extract_genre_from_path(existing_metadata['genre'])
+                if normalized_genre:
+                    result['genre'] = normalized_genre
+                    result['source'].append('metadata_genre')
+
+            # Step 3: Audio analysis — last resort, only for whatever Steps
+            # 1-2 didn't already answer. Classification runs first — BPM and key
             # are only meaningful for some outcomes (see suppression rules
             # below), so knowing the classification lets us skip the
             # tempo/chroma calls entirely when they won't be kept anyway.
@@ -107,7 +180,7 @@ class AudioAnalyzer:
                 y, sr = librosa.load(filepath, sr=None, mono=True)
 
                 if not result['classification'] and duration is not None:
-                    classification = self._classify_sound_type(y, sr, duration)
+                    classification = self._classify_sound_type(y, sr, duration, result['type'] or 'Fx')
                     result['classification'] = classification
                     result['source'].append('analysis_classification')
 
@@ -243,74 +316,124 @@ class AudioAnalyzer:
             logger.debug(f"Key estimation failed: {e}")
             return None
 
-    def _classify_sound_type(self, y, sr, duration):
+    @staticmethod
+    def _normalize_for_keyword_match(text):
+        # This library's naming convention joins words with _/- and no
+        # spaces (e.g. "One_Shots_Sub_Bass"), which defeats \b since
+        # underscore/hyphen count as word characters in regex — normalize
+        # them to spaces first so \b actually lands at real word edges.
+        return re.sub(r'[_\-]+', ' ', text)
+
+    def _classify_from_path(self, filepath, duration):
+        """Folder/filename-priority classification check — see the
+        _LOOP_KEYWORD_RE / _ONESHOT_KEYWORD_RE comment above for the
+        ordering and the real-data evidence behind it. Returns None (no
+        textual evidence either way) when the caller should fall through to
+        audio analysis (_classify_sound_type)."""
+        path_obj = Path(str(filepath))
+        safe_parts = [part for part in path_obj.parts
+                      if part.lower() not in self._CLASSIFICATION_FOLDER_NAMES]
+        safe_path_norm = self._normalize_for_keyword_match(' '.join(safe_parts))
+
+        if self._ONESHOT_KEYWORD_RE.search(safe_path_norm):
+            thresholds = self.config['classification_thresholds']
+            short_max = thresholds['short_oneshot_max_duration_seconds']
+            if duration is None or duration < short_max:
+                return 'Oneshot'
+            return 'FX_Oneshot_Longo'
+
+        if self._LOOP_KEYWORD_RE.search(safe_path_norm):
+            min_loop_duration = self.config['classification_thresholds'].get('min_loop_duration_seconds', 1.5)
+            if duration is not None and duration >= min_loop_duration:
+                return 'Loop'
+
+        return None
+
+    def _classify_sound_type(self, y, sr, duration, type_name='Fx'):
         """
+        Fallback classifier — only reached when _classify_from_path found no
+        textual evidence in the file's own name or path (see that method).
+
         3-way classification driven by behavior, not raw duration:
 
-          Loop              - rhythmic/tonal content with a usable loop point
+          Loop              - content with multiple distinct energy events
+                              across time (a repeating hit, beat, or phrase)
           Oneshot           - single short percussive hit (kick, snare, clap)
           FX_Oneshot_Longo  - single non-rhythmic event that happens to be long
                               (sweep, riser, impact, atmosphere) — NOT a loop
                               just because it's longer than a kick.
 
-        Signals combined:
-          1. Onset regularity - loops have several onsets at fairly even
-             spacing (a groove); one-shots have 0-2 onsets.
-          2. Loop-point similarity - compare the start and end chroma; a
-             loopable file's tail resembles its head (it's built to repeat).
-          3. Energy decay shape - one-shots (short or long) decay to near
-             silence by the end; loops sustain or repeat energy throughout.
+        Primary signal: local peaks in the smoothed RMS energy envelope. A
+        loop is built to repeat, so its envelope has multiple distinct
+        loud/quiet cycles across the file. A one-shot — even a long one
+        like a riser or impact — is a single event: the envelope has
+        exactly one dominant trend (monotonic decay for an impact,
+        monotonic rise for a riser/sweep), i.e. 0-1 local peaks.
+
+        Replaced two earlier signals, both found unreliable against the
+        real library (see logs/fix_loop_misclassification and the
+        commit that introduced this version): onset-interval regularity
+        (real music/percussion has natural timing variation — swing,
+        syncopation, phrasing — so requiring near-metronomic spacing
+        excluded plenty of genuine loops), and head/tail chroma
+        similarity (measured just as high for one-shot impacts/sweeps as
+        for actual loops — no real discriminating power).
+
+        Known remaining edge case, mitigated but not eliminated: a "bank"
+        file bundling several *different* one-shot FX variations back to
+        back (e.g. two distinct risers concatenated in one long wav) can
+        register 2+ well-spread peaks without actually being a repeating
+        loop — no audio signal tried so far (onset regularity, chroma
+        similarity, autocorrelation) cleanly tells that apart from a real
+        loop. This pattern shows up almost exclusively in type=='Fx'
+        content (drum/bass/melody loops don't get bundled this way), so
+        Fx uses a stricter peak-count floor than other types as a
+        practical mitigation rather than a real fix.
         """
         try:
             thresholds = self.config['classification_thresholds']
             short_max = thresholds['short_oneshot_max_duration_seconds']
-            loop_sim_threshold = thresholds['loop_similarity_threshold']
-            cv_threshold = thresholds['onset_regularity_cv_threshold']
-            min_onsets = thresholds['min_onsets_for_rhythmic']
-            tail_ratio = thresholds['tail_silence_ratio']
+            min_peaks_for_loop = thresholds.get(
+                'min_energy_peaks_for_loop_fx' if type_name == 'Fx' else 'min_energy_peaks_for_loop',
+                3 if type_name == 'Fx' else 2,
+            )
+            # A real loop has to contain a repeatable musical phrase across
+            # multiple beats — even at this library's fastest BPMs (~180),
+            # a single 4/4 bar is >1.3s. Below this floor, a single
+            # percussive hit's own transient/overtone content can register
+            # spurious extra energy peaks. Gate Loop out entirely here
+            # rather than trusting the peak count to sort it out.
+            min_loop_duration = thresholds.get('min_loop_duration_seconds', 1.5)
 
-            onset_frames = librosa.onset.onset_detect(y=y, sr=sr, units='frames')
-            num_onsets = len(onset_frames)
-
-            rms = librosa.feature.rms(y=y)[0]
+            rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)[0]
             if len(rms) < 4:
                 return 'Oneshot' if duration < short_max else 'FX_Oneshot_Longo'
 
             peak_energy = np.max(rms)
-            tail_window = max(1, len(rms) // 8)
-            tail_energy = np.mean(rms[-tail_window:])
-            decays_to_silence = peak_energy == 0 or tail_energy < (peak_energy * tail_ratio)
-
-            # Loop-point similarity: compare chroma of the head vs the tail
-            edge_len = min(int(sr * 0.3), len(y) // 4)
-            loop_similarity = 0.0
-            if edge_len > 512:
-                start_chroma = librosa.feature.chroma_cqt(y=y[:edge_len], sr=sr).mean(axis=1)
-                end_chroma = librosa.feature.chroma_cqt(y=y[-edge_len:], sr=sr).mean(axis=1)
-                norm = np.linalg.norm(start_chroma) * np.linalg.norm(end_chroma)
-                if norm > 0:
-                    loop_similarity = float(np.dot(start_chroma, end_chroma) / norm)
-
-            # Onset regularity: several onsets at roughly even spacing = groove
-            is_rhythmic = False
-            if num_onsets >= min_onsets:
-                onset_times = librosa.frames_to_time(onset_frames, sr=sr)
-                intervals = np.diff(onset_times)
-                if len(intervals) >= 2 and np.mean(intervals) > 0:
-                    cv = np.std(intervals) / np.mean(intervals)
-                    is_rhythmic = cv < cv_threshold
-
-            if is_rhythmic and (loop_similarity > loop_sim_threshold or not decays_to_silence):
-                return 'Loop'
-
-            if num_onsets <= 2 and decays_to_silence:
+            if peak_energy == 0:
                 return 'Oneshot' if duration < short_max else 'FX_Oneshot_Longo'
 
-            # Ambiguous middle ground (e.g. a few irregular onsets): fall back
-            # to duration but never default to Loop without rhythmic evidence.
-            if duration < short_max:
-                return 'Oneshot'
-            return 'Loop' if is_rhythmic else 'FX_Oneshot_Longo'
+            # Smooth first so a single event's internal jitter (a kick's own
+            # transient/overtone wobble) doesn't register as separate
+            # "peaks" — only count energy cycles that actually span a
+            # meaningful fraction of the file.
+            smoothed = uniform_filter1d(rms, size=max(3, len(rms) // 30))
+            peaks, _ = find_peaks(smoothed, prominence=peak_energy * 0.15)
+
+            # Peak count alone isn't enough: a one-shot FX built from a
+            # couple of quick consecutive hits (e.g. a "hit + explode"
+            # impact) also registers 2+ peaks, but they're clustered near
+            # the start with a long decay tail after — not a repeating
+            # pattern. A genuine loop's peaks keep going most of the way
+            # to the end of the file.
+            last_peak_frac = (peaks[-1] / len(rms)) if len(peaks) > 0 else 0.0
+            min_last_peak_frac = thresholds.get('min_last_peak_fraction_for_loop', 0.5)
+
+            if (len(peaks) >= min_peaks_for_loop and duration >= min_loop_duration
+                    and last_peak_frac >= min_last_peak_frac):
+                return 'Loop'
+
+            return 'Oneshot' if duration < short_max else 'FX_Oneshot_Longo'
 
         except Exception as e:
             logger.debug(f"Sound type classification failed: {e}")
