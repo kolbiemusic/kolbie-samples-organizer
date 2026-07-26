@@ -62,8 +62,12 @@ class MidiPresetOrganizer:
             return self.destination_root / 'MIDI' / genre / category / tempo_bucket / timesig_dir
 
         if kind == 'preset':
+            # Synth/plugin is the primary browsing axis for presets (user
+            # picks the plugin they're using first, then narrows by genre/
+            # sound type within it) — reversed from the audio/MIDI trees,
+            # where genre leads. See DECISIONS.md for the full rationale.
             plugin_family = self._sanitize_path(metadata.get('plugin_family') or 'Unknown_Plugin')
-            return self.destination_root / 'Presets' / genre / category / plugin_family
+            return self.destination_root / 'Presets' / plugin_family / genre / category
 
         return self.destination_root / '_UNCLASSIFIED'
 

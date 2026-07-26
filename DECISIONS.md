@@ -399,6 +399,25 @@ no campo `source`); vinda do nome ou de meta-evento, sem `~`.
   tier apesar de ter alguma doc parcial de terceiros — formato
   descontinuado, volume baixo (435 arquivos), não compensa o esforço.
 
+## Presets: sintetizador como primeiro nível da árvore (2026-07-26)
+
+Estrutura original era `Presets/{Gênero}/{Categoria}/{Sintetizador}` — o
+mesmo padrão gênero-primeiro do resto do projeto (áudio, MIDI). A pedido
+explícito do usuário, invertida para `Presets/{Sintetizador}/{Gênero}/
+{Categoria}` — o fluxo real de uso é abrir o plugin primeiro (Serum, Diva,
+Massive...) e só depois procurar por estilo/tipo de som dentro dele, não
+o contrário. `plugin_family` (já extraído pelo Tier A/B acima) virou o
+primeiro componente do path em vez do último, em
+`modules/midi_preset_organizer.py` (`calculate_destination_path`,
+`kind == 'preset'`). MIDI não foi alterado (continua
+`MIDI/{Gênero}/{Categoria}/{BPM}/{Compasso}`) — o usuário confirmou
+explicitamente que a mudança era só para presets.
+
+Aplicado retroativamente na árvore já migrada: 9.438 arquivos movidos de
+`Gênero/Categoria/Sintetizador` para `Sintetizador/Gênero/Categoria`
+(mapeamento é uma permutação 1:1 dos 3 níveis, sem risco de colisão de
+nome entre pastas diferentes), 0 colisões reais encontradas.
+
 ## Categoria por abreviação de nome de arquivo
 
 Empresas de sample pack abreviam categoria de som no nome: `PD`=Pad,
