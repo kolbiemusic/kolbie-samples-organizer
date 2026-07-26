@@ -61,6 +61,13 @@ class FileOrganizer:
                     if min_d <= duration < max_d:
                         last_dir = range_str
                         break
+        elif classification == self._sanitize_path('Oneshot'):
+            # Plain one-shots (drum hits, stabs, etc.) have no tempo either,
+            # and unlike FX one-shots there's no useful alternative bucketing
+            # signal (duration doesn't distinguish a kick from a snare) —
+            # every file here would land in the same 'unknown_bpm' bucket,
+            # so skip the subfolder entirely instead of adding a meaningless tier.
+            last_dir = None
         else:
             last_dir = 'unknown_bpm'
             if bpm:
@@ -69,7 +76,9 @@ class FileOrganizer:
                         last_dir = range_str
                         break
 
-        path = self.destination_root / genre / type_name / classification / last_dir
+        path = self.destination_root / genre / type_name / classification
+        if last_dir is not None:
+            path = path / last_dir
         return path
 
     def generate_new_filename(self, original_filename, metadata):
