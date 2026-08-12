@@ -108,12 +108,14 @@ def main():
 
     config = load_config(args.config)
     copy_units, unresolved = resolve_copy_units(args.sources, config)
-    logger.info(f"Copy units resolved: {len(copy_units)} (genre pipeline shared with audio migration)")
+    total = len(copy_units)
+    logger.info(f"Copy units resolved: {total} (genre pipeline shared with audio migration)")
 
     total_copied, total_skipped, total_excluded = 0, 0, 0
     packs_with_presets = 0
-    for folder, genre in copy_units:
+    for i, (folder, genre) in enumerate(copy_units, start=1):
         copied, skipped, excluded = copy_serum_presets(folder, genre, args.destination, dry_run=args.dry_run)
+        logger.info(f"PROGRESS {i}/{total}")
         if copied or skipped or excluded:
             packs_with_presets += 1
             logger.info(f"[{genre}] {Path(folder).name}: {copied} copied, {skipped} skipped, {excluded} excluded (other synth)")

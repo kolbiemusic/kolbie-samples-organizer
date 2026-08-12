@@ -200,13 +200,15 @@ def main():
     config = load_config(args.config)
     copy_units, unresolved = resolve_copy_units(args.sources, config)
 
-    logger.info(f"Copy units resolved: {len(copy_units)}")
+    total = len(copy_units)
+    logger.info(f"Copy units resolved: {total}")
     logger.info(f"Pack roots with no genre (marker or fallback) — left out: {len(unresolved)}")
 
     stats = {'copied': 0, 'skipped': 0, 'would_copy': 0, 'failed': 0}
-    for folder, genre in copy_units:
+    for i, (folder, genre) in enumerate(copy_units, start=1):
         result = copy_unit(folder, genre, args.destination, dry_run=args.dry_run)
         stats[result] += 1
+        logger.info(f"PROGRESS {i}/{total}")
         logger.info(f"[{result}] {genre} <- {folder}")
 
     logger.info("=" * 60)
