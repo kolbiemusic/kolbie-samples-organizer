@@ -121,6 +121,10 @@ MANUAL_OVERRIDES = {
     'virtual riot': 'Dubstep',
     'swag type beats': 'Pop',
     'vital serum preset': 'Future Bass',
+    # user's own manual rename of the destination folder (confirmed
+    # intentional, not a bug, 2026-08-12) -- keyword-matches "pluggnb"
+    # otherwise, which would keep recreating a duplicate Pluggnb copy.
+    'serum 2 pluggnb - new jazz': 'NEW JAZZ',
 }
 
 DEMO_PREVIEW_RE = re.compile(r'(?<![a-z0-9])(demo|preview)(?![a-z0-9])', re.IGNORECASE)
@@ -148,20 +152,32 @@ def find_pack_roots(source_dir):
 
 
 def deepest_genre_in_path(rel_path, genre_keywords):
-    """Check each path component from deepest to shallowest; first
-    word-boundary keyword match wins (also checking MANUAL_OVERRIDES phrases
-    as a substring on each component -- bundle packs often organize by a
-    sub-product name, like PML's "Overdrive"/"Bass Drops", that only
-    resolves to a genre via research, not a keyword). Handles bundle packs
-    organized internally by genre, and ordinary packs alike."""
-    for part in reversed(rel_path.parts):
-        genre = match_main_genre(part, genre_keywords)
-        if genre:
-            return genre
+    """Check each DIRECTORY component (not the preset's own filename) from
+    deepest to shallowest; first word-boundary keyword match wins (also
+    checking MANUAL_OVERRIDES phrases as a substring on each component --
+    bundle packs often organize by a sub-product name, like PML's
+    "Overdrive"/"Bass Drops", that only resolves to a genre via research,
+    not a keyword). Handles bundle packs organized internally by genre, and
+    ordinary packs alike.
+
+    The filename itself is deliberately excluded: a preset's own name is a
+    TIMBRE/sound-type descriptor ("Pad - Ambient Rave", "LEAD - Ambient"),
+    not a genre marker -- matching genre keywords against it pulled single
+    presets like an ambient-flavored pad out of an otherwise all-Pop pack
+    into a fake one-file "Ambient" folder (caught 2026-08-25, user: "ambient
+    e subcategoria do timbre, nao genero"). Folder names are much more
+    reliably genuine genre organization (bundle subfolders, pack names)."""
+    for part in reversed(rel_path.parts[:-1]):
+        # MANUAL_OVERRIDES checked first -- a curated research decision
+        # (or a user's own explicit rename, e.g. NEW JAZZ) must win over a
+        # generic keyword substring match on the same folder name.
         part_norm = normalize(part)
         for phrase, override_genre in MANUAL_OVERRIDES.items():
             if normalize(phrase) in part_norm:
                 return override_genre
+        genre = match_main_genre(part, genre_keywords)
+        if genre:
+            return genre
     return None
 
 
