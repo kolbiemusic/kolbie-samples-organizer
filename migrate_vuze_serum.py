@@ -67,16 +67,60 @@ _OTHER_SYNTH_RE = re.compile(
 )
 
 # Web-researched genre for packs whose own path doesn't spell out a genre
-# anywhere -- confirmed against artist bios / label / Splice pack pages in
-# the original 2026-08-12 run. Matched as a case-insensitive substring
-# against the pack's root folder name. Extend as more packs get researched.
+# anywhere -- confirmed against artist bios / label / Splice pack pages.
+# Matched as a case-insensitive substring against the pack's root folder
+# name. Extend as more packs get researched (don't reintroduce a "pack's
+# own name becomes the genre" fallback -- that's what caused the 2026-08-25
+# mess of ~40 junk one-pack "genre" folders; unresolved packs are reported
+# and skipped instead, see main()).
 MANUAL_OVERRIDES = {
     'cruels': 'Trap',
     'late night nostalgia': 'LoFi',
-    'freshly squeezed definitive collection': 'Pop',
+    'serum 2 definitive collection': 'Pop',
     'overdrive': 'Techno',
     'dimension essentials': 'Techno',
     'bass drops': 'Dubstep',
+    # researched 2026-08-25 (VUZE remediation pass):
+    'cyberpunk essentials': 'Synthwave',
+    'future progressive': 'House',
+    'cloudpop': 'Pop',
+    'jilax': 'Trance',
+    'neo electronica': 'Synthwave',
+    'the 80s for serum': 'Synthwave',
+    'music production biz': 'Techno',
+    'odd frequency - pulse': 'Indie Dance',
+    'portify': 'Future Bass',
+    'feelings vol.2': 'House',
+    'renraku serum 2 bass one': 'Dubstep',
+    'ultimate reese': 'DnB',
+    'tisoki sounds vol. 2': 'Dubstep',
+    'unmute - places': 'Techno',
+    'bad royale': 'Future Bass',
+    'crnkn': 'Future Bass',
+    'continuity vol. 3 by gill chang': 'Future Bass',
+    'words unspoken': 'Chillwave',
+    'kompany kollection': 'Dubstep',
+    'mike hawkins': 'House',
+    'morgan page sample pack': 'House',
+    'paperwhite presents the feels': 'Pop',
+    'smle sample pack': 'Future Bass',
+    'spirix sounds': 'Future Bass',
+    'stélouse loose sounds': 'Future Bass',
+    'subtronics': 'Dubstep',
+    'the sounds u need': 'Dubstep',
+    'vaski serum pack': 'Dubstep',
+    'donuts & dinosaurs': 'Future Bass',
+    'heavenly keys with eric butler': 'HipHop',
+    'serum fire with von xon': 'RnB',
+    'fabian mazur - wubz': 'Dubstep',
+    'oliver power tools': 'Disco',
+    'wax motif': 'House',
+    'world club sounds': 'Dancehall',
+    'karra': 'Pop',
+    'og parker': 'HipHop',
+    'virtual riot': 'Dubstep',
+    'swag type beats': 'Pop',
+    'vital serum preset': 'Future Bass',
 }
 
 DEMO_PREVIEW_RE = re.compile(r'(?<![a-z0-9])(demo|preview)(?![a-z0-9])', re.IGNORECASE)
@@ -105,31 +149,39 @@ def find_pack_roots(source_dir):
 
 def deepest_genre_in_path(rel_path, genre_keywords):
     """Check each path component from deepest to shallowest; first
-    word-boundary keyword match wins. Handles bundle packs organized
-    internally by genre, and ordinary packs alike."""
+    word-boundary keyword match wins (also checking MANUAL_OVERRIDES phrases
+    as a substring on each component -- bundle packs often organize by a
+    sub-product name, like PML's "Overdrive"/"Bass Drops", that only
+    resolves to a genre via research, not a keyword). Handles bundle packs
+    organized internally by genre, and ordinary packs alike."""
     for part in reversed(rel_path.parts):
         genre = match_main_genre(part, genre_keywords)
         if genre:
             return genre
+        part_norm = normalize(part)
+        for phrase, override_genre in MANUAL_OVERRIDES.items():
+            if normalize(phrase) in part_norm:
+                return override_genre
     return None
 
 
 def resolve_pack_genre(pack_root, genre_keywords):
     """Pack-level fallback genre, used only for files whose own relative
-    path has no genre keyword anywhere in it."""
-    name_l = pack_root.name.lower()
+    path has no genre keyword anywhere in it. Returns None if nothing
+    matches -- callers must NOT invent a genre from the pack's own name
+    (that's what caused the 2026-08-25 mess); unresolved packs get
+    reported and skipped instead, see main()."""
+    name_norm = normalize(pack_root.name)  # scene-release names join words with '.', not spaces
     for phrase, genre in MANUAL_OVERRIDES.items():
-        if phrase in name_l:
+        if normalize(phrase) in name_norm:
             return genre
-    genre = match_main_genre(pack_root.name, genre_keywords)
-    if genre:
-        return genre
-    return pack_root.name  # last resort: pack keeps its own name as its genre
+    return match_main_genre(pack_root.name, genre_keywords)
 
 
 def migrate_pack(pack_root, genre_keywords, dest_root, dry_run=False):
     stats = {'presets': 0, 'wavetables': 0, 'samples': 0,
-              'skipped': 0, 'excluded_other_synth': 0, 'excluded_demo': 0}
+              'skipped': 0, 'excluded_other_synth': 0, 'excluded_demo': 0,
+              'excluded_unresolved': 0}
     fallback_genre = resolve_pack_genre(pack_root, genre_keywords)
 
     for src_file in pack_root.rglob('*'):
@@ -139,6 +191,10 @@ def migrate_pack(pack_root, genre_keywords, dest_root, dry_run=False):
         rel = src_file.relative_to(pack_root)
         ext = src_file.suffix.lower()
         genre = deepest_genre_in_path(rel, genre_keywords) or fallback_genre
+
+        if genre is None:
+            stats['excluded_unresolved'] += 1
+            continue
 
         if ext in PRESET_EXTENSIONS:
             if ext == '.fxp' and is_other_synth_fxp(src_file):
@@ -190,16 +246,30 @@ def main():
     logger.info(f"Pack roots found: {total}")
 
     totals = {'presets': 0, 'wavetables': 0, 'samples': 0,
-              'skipped': 0, 'excluded_other_synth': 0, 'excluded_demo': 0}
+              'skipped': 0, 'excluded_other_synth': 0, 'excluded_demo': 0,
+              'excluded_unresolved': 0}
+    unresolved_packs = []
     for i, pack_root in enumerate(pack_roots, start=1):
         stats = migrate_pack(pack_root, config['genre_keywords'], args.destination, dry_run=args.dry_run)
         logger.info(f"PROGRESS {i}/{total}")
         logger.info(f"[{pack_root.name}] {stats}")
+        if stats['excluded_unresolved']:
+            unresolved_packs.append(pack_root.name)
         for k, v in stats.items():
             totals[k] += v
 
     logger.info("=" * 60)
     logger.info(f"Totals: {totals}")
+
+    if unresolved_packs:
+        logger.info(f"Packs with no resolvable genre (skipped, not copied): {len(unresolved_packs)}")
+        report_path = Path(args.destination) / 'vuze_sem_genero_report.txt'
+        try:
+            report_path.write_text('\n'.join(sorted(unresolved_packs)) + '\n')
+            logger.info(f"Unresolved packs written to: {report_path}")
+            logger.info("Add an entry to MANUAL_OVERRIDES in this script (web-research the genre) and re-run to pick them up.")
+        except OSError as e:
+            logger.warning(f"Could not write unresolved report: {e}")
 
 
 if __name__ == '__main__':
