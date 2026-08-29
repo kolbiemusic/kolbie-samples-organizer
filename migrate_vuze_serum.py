@@ -213,7 +213,16 @@ def migrate_pack(pack_root, genre_keywords, dest_root, dry_run=False):
             continue
 
         if ext in PRESET_EXTENSIONS:
-            if ext == '.fxp' and is_other_synth_fxp(src_file):
+            # Check the path RELATIVE TO THE PACK ROOT only -- not the full
+            # absolute path. A pack root is often named to advertise every
+            # format it bundles (e.g. "... (WAV, SERUM, SYLENTH1)" or
+            # "...Wav.Sylenth1.Serum.Spire"), with genuine per-synth
+            # subfolders (Presets/Serum/, Presets/Sylenth1/) inside. Checking
+            # the full path made the pack's own name false-positive-exclude
+            # every single .fxp, including the real Presets/Serum/ ones --
+            # silently dropped two whole packs (caught 2026-08-29, user:
+            # "vc nao migrou nenhum pack do serum de Progressive?").
+            if ext == '.fxp' and is_other_synth_fxp(rel):
                 stats['excluded_other_synth'] += 1
                 continue
             dest_file = Path(dest_root) / 'Presets' / 'User' / genre / pack_root.name / rel
