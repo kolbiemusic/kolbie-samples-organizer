@@ -73,11 +73,19 @@ def copy_serum_presets(folder, genre, destination_root, dry_run=False):
         ext = src_file.suffix.lower()
         if ext not in SERUM_EXTENSIONS:
             continue
-        if ext == '.fxp' and is_other_synth_fxp(src_file):
+
+        rel = src_file.relative_to(folder)
+        # Check the path RELATIVE TO THE COPY UNIT only -- not the full
+        # absolute path. A folder is sometimes named to advertise every
+        # synth format it bundles (e.g. "... (Serum, Sylenth1)"), with a
+        # genuine Serum/ subfolder inside; checking the full path let the
+        # folder's own name false-positive-exclude every .fxp in it,
+        # including real Serum ones (same bug found and fixed in
+        # migrate_vuze_serum.py, 2026-08-29).
+        if ext == '.fxp' and is_other_synth_fxp(rel):
             excluded_other_synth += 1
             continue
 
-        rel = src_file.relative_to(folder)
         dest_file = dest_pack_root / rel
 
         if dest_file.exists():
